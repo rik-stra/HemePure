@@ -684,14 +684,14 @@ namespace hemelb
 			{
 				field.type = extraction::OutputField::Velocity;
 			}
-			else if (type == "velocitymagnitude")
-			{
-				field.type = extraction::OutputField::VelocityMagnitude;
-			}
-			else if (type == "machnumber")
-			{
-				field.type = extraction::OutputField::MachNumber;
-			}
+			//else if (type == "velocitymagnitude")
+			//{
+			//	field.type = extraction::OutputField::VelocityMagnitude;
+			//}
+			//else if (type == "machnumber")
+			//{
+			//	field.type = extraction::OutputField::MachNumber;
+			//}
 			else if (type == "vonmisesstress")
 			{
 				field.type = extraction::OutputField::VonMisesStress;

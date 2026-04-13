@@ -53,12 +53,12 @@
     </outlet>
   </outlets>
   <properties>
-    <propertyoutput file="whole.dat" period="100">
+    <propertyoutput file="whole_ds.dat" period="1000">
       <geometry type="whole" />
       <field type="velocity" />
       <field type="pressure" />
     </propertyoutput>
-    <propertyoutput file="inlet.dat" period="100">
+    <propertyoutput file="inlet_ds.dat" period="1000">
       <geometry type="inlet" />
       <field type="velocity" />
       <field type="pressure" />
