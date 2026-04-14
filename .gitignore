@@ -5,4 +5,5 @@ dep/src/loadbalancing*
 fluidAndLinks*
 install/
 results/
+results_*
 __pycache__/

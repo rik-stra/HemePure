@@ -2,7 +2,7 @@
 <hemelbsettings version="3">
   <simulation>
     <step_length units="s" value="1e-5"/>
-    <steps units="lattice" value="10000"/>
+    <steps units="lattice" value="4000"/>
     <stresstype value="1"/>
     <voxel_size units="m" value="5e-5"/>
     <origin units="m" value="(0.0,0.0,0.0)"/>
@@ -22,11 +22,15 @@
     <inlet>
       <condition subtype="turbulent" type="velocity">
         <radius units="m" value="0.0017"/>
-        <maximum units="m/s" value="0.2"/>
-        <intensity units="dimensionless" value="0.08"/>
+        <maximum units="m/s" value="0.24"/>
+        <intensity units="dimensionless" value="0.10"/>
         <warmup units="lattice" value="2000"/>
         <seed units="lattice" value="7"/>
-        <temporal_period units="lattice" value="20"/>
+        <temporal_period units="lattice" value="40"/>
+        <n_modes units="dimensionless" value="16"/>
+        <min_period units="lattice" value="10"/>
+        <max_period units="lattice" value="200"/>
+        <spectral_exponent units="dimensionless" value="1.6666667"/>
       </condition>
       <normal units="dimensionless" value="(4.15565e-13,1.44689e-12,1)"/>
       <position units="lattice" value="(165.499,35.8291,3)"/>
@@ -55,12 +59,97 @@
     </outlet>
   </outlets>
   <properties>
-    <propertyoutput file="whole_ds.dat" period="1000">
-      <geometry type="whole" />
+    <propertyoutput file="probe01.dat" period="100">
+      <geometry type="sphere">
+        <point units="m" value="(0.008275,0.001791,0.000250)"/>
+        <radius units="m" value="6e-5"/>
+      </geometry>
       <field type="velocity" />
       <field type="pressure" />
     </propertyoutput>
-    <propertyoutput file="inlet_ds.dat" period="1000">
+
+    <propertyoutput file="probe02.dat" period="100">
+      <geometry type="sphere">
+        <point units="m" value="(0.008275,0.001791,0.000550)"/>
+        <radius units="m" value="6e-5"/>
+      </geometry>
+      <field type="velocity" />
+      <field type="pressure" />
+    </propertyoutput>
+
+    <propertyoutput file="probe03.dat" period="100">
+      <geometry type="sphere">
+        <point units="m" value="(0.008275,0.001791,0.000850)"/>
+        <radius units="m" value="6e-5"/>
+      </geometry>
+      <field type="velocity" />
+      <field type="pressure" />
+    </propertyoutput>
+
+    <propertyoutput file="probe04.dat" period="100">
+      <geometry type="sphere">
+        <point units="m" value="(0.008275,0.001791,0.001150)"/>
+        <radius units="m" value="6e-5"/>
+      </geometry>
+      <field type="velocity" />
+      <field type="pressure" />
+    </propertyoutput>
+
+    <propertyoutput file="probe05.dat" period="100">
+      <geometry type="sphere">
+        <point units="m" value="(0.008275,0.001791,0.001450)"/>
+        <radius units="m" value="6e-5"/>
+      </geometry>
+      <field type="velocity" />
+      <field type="pressure" />
+    </propertyoutput>
+
+    <propertyoutput file="probe06.dat" period="100">
+      <geometry type="sphere">
+        <point units="m" value="(0.008275,0.001791,0.001750)"/>
+        <radius units="m" value="6e-5"/>
+      </geometry>
+      <field type="velocity" />
+      <field type="pressure" />
+    </propertyoutput>
+
+    <propertyoutput file="probe07.dat" period="100">
+      <geometry type="sphere">
+        <point units="m" value="(0.008275,0.001791,0.002050)"/>
+        <radius units="m" value="6e-5"/>
+      </geometry>
+      <field type="velocity" />
+      <field type="pressure" />
+    </propertyoutput>
+
+    <propertyoutput file="probe08.dat" period="100">
+      <geometry type="sphere">
+        <point units="m" value="(0.008275,0.001791,0.002350)"/>
+        <radius units="m" value="6e-5"/>
+      </geometry>
+      <field type="velocity" />
+      <field type="pressure" />
+    </propertyoutput>
+
+    <propertyoutput file="probe09.dat" period="100">
+      <geometry type="sphere">
+        <point units="m" value="(0.008275,0.001791,0.002650)"/>
+        <radius units="m" value="6e-5"/>
+      </geometry>
+      <field type="velocity" />
+      <field type="pressure" />
+    </propertyoutput>
+
+    <propertyoutput file="probe10.dat" period="100">
+      <geometry type="sphere">
+        <point units="m" value="(0.008275,0.001791,0.002950)"/>
+        <radius units="m" value="6e-5"/>
+      </geometry>
+      <field type="velocity" />
+      <field type="pressure" />
+    </propertyoutput>
+
+    <propertyoutput file="inlet.dat" period="1000">
       <geometry type="inlet" />
       <field type="velocity" />
       <field type="pressure" />

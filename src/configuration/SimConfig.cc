@@ -1077,6 +1077,38 @@ namespace hemelb
 				newIolet->SetTemporalPeriod(temporalPeriod);
 			}
 
+			const io::xml::Element nModesEl = conditionEl.GetChildOrNull("n_modes");
+			if (nModesEl != io::xml::Element::Missing())
+			{
+				unsigned int nModes;
+				GetDimensionalValue(nModesEl, "dimensionless", nModes);
+				newIolet->SetModeCount(nModes);
+			}
+
+			const io::xml::Element minPeriodEl = conditionEl.GetChildOrNull("min_period");
+			if (minPeriodEl != io::xml::Element::Missing())
+			{
+				LatticeTimeStep minPeriod;
+				GetDimensionalValue(minPeriodEl, "lattice", minPeriod);
+				newIolet->SetMinPeriod(minPeriod);
+			}
+
+			const io::xml::Element maxPeriodEl = conditionEl.GetChildOrNull("max_period");
+			if (maxPeriodEl != io::xml::Element::Missing())
+			{
+				LatticeTimeStep maxPeriod;
+				GetDimensionalValue(maxPeriodEl, "lattice", maxPeriod);
+				newIolet->SetMaxPeriod(maxPeriod);
+			}
+
+			const io::xml::Element spectralExponentEl = conditionEl.GetChildOrNull("spectral_exponent");
+			if (spectralExponentEl != io::xml::Element::Missing())
+			{
+				Dimensionless spectralExponent;
+				GetDimensionalValue(spectralExponentEl, "dimensionless", spectralExponent);
+				newIolet->SetSpectralExponent(spectralExponent);
+			}
+
 			if (warmUpSteps != 0)
 			{
 				newIolet->SetWarmup(warmUpSteps);

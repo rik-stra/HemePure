@@ -6,6 +6,8 @@
 #ifndef HEMELB_LB_IOLETS_INOUTLETTURBULENTVELOCITY_H
 #define HEMELB_LB_IOLETS_INOUTLETTURBULENTVELOCITY_H
 
+#include <vector>
+
 #include "lb/iolets/InOutLetVelocity.h"
 
 namespace hemelb
@@ -48,6 +50,26 @@ namespace hemelb
             temporalPeriod = p;
           }
 
+          void SetModeCount(const unsigned int n)
+          {
+            modeCount = n;
+          }
+
+          void SetMinPeriod(const LatticeTimeStep p)
+          {
+            minPeriod = p;
+          }
+
+          void SetMaxPeriod(const LatticeTimeStep p)
+          {
+            maxPeriod = p;
+          }
+
+          void SetSpectralExponent(const Dimensionless e)
+          {
+            spectralExponent = e;
+          }
+
         private:
           static uint64_t Mix(uint64_t x);
           static double HashToUnit(uint64_t x);
@@ -57,6 +79,10 @@ namespace hemelb
           LatticeTimeStep warmUpLength;
           LatticeTimeStep seed;
           LatticeTimeStep temporalPeriod;
+            unsigned int modeCount;
+            LatticeTimeStep minPeriod;
+            LatticeTimeStep maxPeriod;
+            Dimensionless spectralExponent;
       };
     }
   }
