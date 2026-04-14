@@ -11,6 +11,7 @@
 #include "lb/iolets/InOutLetCosine.h"
 #include "lb/iolets/InOutLetFile.h"
 #include "lb/iolets/InOutLetParabolicVelocity.h"
+#include "lb/iolets/InOutLetTurbulentVelocity.h"
 #include "lb/iolets/InOutLetWomersleyVelocity.h"
 #include "lb/iolets/InOutLetWomersleyElasticVelocity.h"
 #include "lb/iolets/InOutLetFileVelocity.h"

@@ -12,6 +12,7 @@ add_library(hemelb_lb
 	iolets/InOutLetFile.cc
 	iolets/InOutLetVelocity.cc
 	iolets/InOutLetParabolicVelocity.cc
+	iolets/InOutLetTurbulentVelocity.cc
 	iolets/InOutLetWomersleyVelocity.cc
 	iolets/InOutLetWomersleyElasticVelocity.cc
 	iolets/InOutLetFileVelocity.cc

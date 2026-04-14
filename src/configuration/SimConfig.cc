@@ -462,6 +462,10 @@ namespace hemelb
 			{
 				newIolet = DoIOForFileVelocityInOutlet(ioletEl);
 			}
+			else if (conditionSubtype == "turbulent")
+			{
+				newIolet = DoIOForTurbulentVelocityInOutlet(ioletEl);
+			}
 			else
 			{
 				throw Exception() << "Invalid boundary condition subtype '" << conditionSubtype << "' in "
@@ -493,6 +497,10 @@ namespace hemelb
 			else if (conditionSubtype == "file")
 			{
 				newIolet = DoIOForFileVelocityInOutlet(ioletEl);
+			}
+			else if (conditionSubtype == "turbulent")
+			{
+				newIolet = DoIOForTurbulentVelocityInOutlet(ioletEl);
 			}
 			else
 			{
@@ -1023,6 +1031,56 @@ namespace hemelb
 
 			const io::xml::Element radiusEl = conditionEl.GetChildOrThrow("radius");
 			newIolet->SetRadius(GetDimensionalValueInLatticeUnits<LatticeDistance>(radiusEl, "m"));
+
+			return newIolet;
+		}
+
+		lb::iolets::InOutLet* SimConfig::DoIOForTurbulentVelocityInOutlet(
+				const io::xml::Element& ioletEl)
+		{
+			lb::iolets::InOutLetTurbulentVelocity* newIolet = new lb::iolets::InOutLetTurbulentVelocity();
+			DoIOForBaseInOutlet(ioletEl, newIolet);
+
+			const io::xml::Element conditionEl = ioletEl.GetChildOrThrow("condition");
+
+			const io::xml::Element radiusEl = conditionEl.GetChildOrThrow("radius");
+			newIolet->SetRadius(GetDimensionalValueInLatticeUnits<LatticeDistance>(radiusEl, "m"));
+
+			const io::xml::Element maximumEl = conditionEl.GetChildOrThrow("maximum");
+			newIolet->SetMaxSpeed(GetDimensionalValueInLatticeUnits<PhysicalSpeed>(maximumEl, "m/s"));
+
+			Dimensionless intensity;
+			GetDimensionalValue(conditionEl.GetChildOrThrow("intensity"), "dimensionless", intensity);
+			newIolet->SetIntensity(intensity);
+
+			const io::xml::Element warmupEl = conditionEl.GetChildOrNull("warmup");
+			if (warmupEl != io::xml::Element::Missing())
+			{
+				LatticeTimeStep warmup;
+				GetDimensionalValue(warmupEl, "lattice", warmup);
+				newIolet->SetWarmup(warmup);
+			}
+
+			const io::xml::Element seedEl = conditionEl.GetChildOrNull("seed");
+			if (seedEl != io::xml::Element::Missing())
+			{
+				LatticeTimeStep seed;
+				GetDimensionalValue(seedEl, "lattice", seed);
+				newIolet->SetSeed(seed);
+			}
+
+			const io::xml::Element temporalPeriodEl = conditionEl.GetChildOrNull("temporal_period");
+			if (temporalPeriodEl != io::xml::Element::Missing())
+			{
+				LatticeTimeStep temporalPeriod;
+				GetDimensionalValue(temporalPeriodEl, "lattice", temporalPeriod);
+				newIolet->SetTemporalPeriod(temporalPeriod);
+			}
+
+			if (warmUpSteps != 0)
+			{
+				newIolet->SetWarmup(warmUpSteps);
+			}
 
 			return newIolet;
 		}

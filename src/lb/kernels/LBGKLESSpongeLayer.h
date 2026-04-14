@@ -4,8 +4,8 @@
 // file AUTHORS. This software is provided under the terms of the
 // license in the file LICENSE.
 
-#ifndef HEMELB_LB_KERNELS_LBGK_SPONGELAYER_H
-#define HEMELB_LB_KERNELS_LBGK_SPONGELAYER_H
+#ifndef HEMELB_LB_KERNELS_LBGKLES_SPONGELAYER_H
+#define HEMELB_LB_KERNELS_LBGKLES_SPONGELAYER_H
 
 #include <cstdlib>
 #include "util/utilityFunctions.h"
@@ -112,24 +112,6 @@ namespace hemelb
               				}
 							// Note that viscosity is proportional to (tau - 0.5)
 							vTau[i] = vRatioTot * (tau0 - 0.5) + 0.5;
-
-                            for (int j = 0; j < initParams.inletPositions.size(); j++)
-              				{
-                                if(j != 2){
-                                    const LatticeDistance distSq = (siteLocation - initParams.inletPositions[j]).GetMagnitudeSquared();
-                                    // const int dist = (siteLocation - initParams.outletPositions[j]).GetByDirection(util::Direction::Direction::X);
-                                    // const LatticeDistance distSq = dist * dist;
-                                    const LatticeDistance dist = std::sqrt(distSq);
-                                    if (distSq <= widthSq)
-                                    {
-                                        // Quadratic function
-                                        vRatioTot *= 1.0 + (vRatio - 1.0) * (dist / width - 1.0) * (dist / width - 1.0);
-
-                                        // Sinusoidal function
-                                        //vRatioTot *= (0.5 * (vRatio - 1.0)) * (1.0 + cos((PI / widthSq) * distSq)) + 1.0;
-                                    }
-                                }
-              				}
                             vTau[i] = vRatioTot * (tau0 - 0.5) + 0.5;
             			}
           			}
@@ -209,4 +191,4 @@ namespace hemelb
 	}
 }
 
-#endif /* HEMELB_LB_KERNELS_LBGK_SPONGELAYER_H */
+#endif /* HEMELB_LB_KERNELS_LBGKLES_SPONGELAYER_H */
