@@ -177,6 +177,90 @@ Advanced edits (geometry consistency sensitive):
 - inlet and outlet normals
 - radii and areas
 
+## Processing simulation output
+
+There are two distinct output paths in this repository.
+
+### 1) Property output written directly as text
+The `propertyoutput` entries in the generated XML write plain-text files directly. In the preprocessing script these are typically `inlet.dat`, `outlet.dat`, and `whole.dat`, with the fields and output period set by the XML.
+
+These files are already readable text and can be processed directly by scripts such as [cases/convert_to_paraview.py](cases/convert_to_paraview.py).
+
+### 2) Binary extraction output that must be converted
+The case directories also use the extraction pipeline, where HemeLB writes binary files under `results/Extracted/`. Those binary files are not meant to be read directly as text.
+
+They are converted to text with `hemeXtract` before plotting or custom analysis.
+
+### Text output row format
+Whether the text comes from a direct property file or from `hemeXtract`, the downstream scripts expect rows in this layout:
+
+```text
+steps gridX gridY gridZ velX velY velZ pressure [mpirank]
+```
+
+The first lines are header or metadata lines, then numeric rows follow. The same timestep may appear on many consecutive rows, one per lattice site in the requested output region.
+
+### Converting text output for ParaView
+The repository includes [cases/convert_to_paraview.py](cases/convert_to_paraview.py), which converts a HemeLB LF text output file into a VTK time series:
+
+- one `.vtp` file per timestep
+- one `.pvd` collection file for ParaView
+- point data arrays: `gridX`, `gridY`, `gridZ`, `velX`, `velY`, `velZ`, `pressure`
+
+Example usage:
+
+```bash
+python3 cases/convert_to_paraview.py results/outlet.txt -o results/paraview -p outlet
+```
+
+This produces files like `outlet_0000.vtp`, `outlet_0001.vtp`, and `outlet.pvd`.
+
+### Converting binary extraction output to text with hemeXtract
+The case scripts use `hemeXtract` to convert binary extraction files into plain text before any custom analysis. The most common invocation in this repository is:
+
+```bash
+./hemeXtract -X results/Extracted/inlet.dat > results/inlet.txt
+./hemeXtract -X results/Extracted/outlet.dat > results/outlet.txt
+./hemeXtract -X results/Extracted/planeY.dat > results/planeY.txt
+```
+
+The `-X` flag is the extraction mode used by the bundled case scripts. The binary input is the file written by HemeLB in `results/Extracted/`, and the redirected output is the text file used for plotting or further processing.
+
+The `hemeXtract` executable can also work as a comparison or statistics tool, but in the repository examples it is used mainly as a binary-to-text extractor.
+
+The binary usage string reports these relevant switches:
+
+- `-X` or `--extract`: extraction mode used to convert the binary output into text
+- `-C` or `--compare`: comparison mode taking two filenames
+- `-i` or `--input`: input filename
+- `-o` or `--output`: output filename
+- `-p` or `--project`: project onto a comma-separated vector
+- `-m` or `--minexistent`: minimum number of existing sites
+- `-n` or `--numsnapshots`: number of snapshots
+- `-v` or `--verbose`: verbose output
+- `-s` or `--stats`: print statistics
+- `-r` or `--relativeErr`: report relative error
+
+The usage text also accepts time-scaling options such as `-1`, `-2`, `-a`, `-A`, `-b`, and `-B`, but the repository case scripts shown here only use `-X`.
+
+### Quick text splitting workflow
+For a simpler workflow, [cases/UnevenArms/toParaview.sh](cases/UnevenArms/toParaview.sh) shows how to split a combined output file into timestep-wise text files and prepend the standard header:
+
+- removes the first two lines
+- strips blank lines
+- splits rows by timestep using `awk`
+- inserts the header line `steps gridX gridY gridZ velX velY velZ pressure`
+
+This is useful if you want to do lightweight plotting or custom processing before converting to VTK.
+
+### Example analysis scripts in the repo
+The case folders also contain scripts that read simulation output for specific analyses, for example:
+
+- [cases/UnevenArms/postProcessFlowRates.py](cases/UnevenArms/postProcessFlowRates.py) for collating flow rates and pressure traces
+- [cases/UnevenArms/postProcessPlotSingleFunction.py](cases/UnevenArms/postProcessPlotSingleFunction.py) for plotting extracted signals
+
+These scripts are case-specific examples, but they show the expected structure of postprocessed `inlet.txt` / `outlet.txt` style data.
+
 ## Boundary conditions implemented in solver code
 
 ### Inflow-related classes
