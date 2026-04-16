@@ -1,0 +1,11 @@
+name: hemepure-gcc15
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - cmake=3.28.4
+  - gcc_linux-64=15.2.0
+  - gxx_linux-64=15.2.0
+  - openmpi=5.0.8
+  - ninja=1.13.2
+  - pkg-config=0.29.2

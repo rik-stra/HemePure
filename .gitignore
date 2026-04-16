@@ -7,3 +7,4 @@ install/
 results/
 results_*
 __pycache__/
+cases/*_vox/
