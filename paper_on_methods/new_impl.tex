@@ -1,0 +1,91 @@
+\documentclass[]{elsarticle}
+\usepackage{a4wide}
+\usepackage{csquotes}
+
+\usepackage[dvipsnames]{xcolor}
+\usepackage{graphicx,color,booktabs,listings,caption,subcaption,tikz,amsmath,amssymb,placeins,subfiles,tabto, parskip}
+\usetikzlibrary{fit, positioning, backgrounds}
+
+\usepackage[titletoc]{appendix}
+\usepackage{algpseudocode}
+\usepackage{algorithm}
+\usepackage{esvect}
+\usepackage{gensymb}
+\usepackage{inconsolata}
+\usepackage{hyperref}
+\pdfstringdefDisableCommands{%
+  \def\corref#1{}%
+  \def\cortext#1#2{}%
+  \def\affiliation#1#2{}%
+  \def\@corref{}%
+  \def\cnotenum#1{}%
+}
+\usepackage{natbib}
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue,
+    filecolor=magenta,      
+    urlcolor=cyan,
+    pdftitle={Reduced Subgrid-Scale Terms for Turbulence Simulations with the Lattice Boltzmann Method},
+    pdfpagemode=FullScreen,
+    }
+\usepackage{pdfpages}
+\usetikzlibrary{math}
+\usepackage{arydshln}
+\newcommand{\D}{\mathrm{d}}
+\DeclareMathOperator*{\argmax}{arg\,max}
+\DeclareMathOperator*{\argmin}{arg\,min}
+
+
+\begin{document}
+
+\subsection{Three-dimensional implementation of kernel-based QoIs}
+In HemePure we implement the scale-aware QoIs directly in the 3D LBM solver as global time-series diagnostics evaluated on post-collision velocity fields. At each selected time step, we read the local post-collision velocity cache and compute kernel-filtered velocities for a fixed kernel set $\{G_3, L_3, L_1\}$, where $G_s$ is a Gaussian low-pass kernel and $L_s$ is a Laplacian-based high-pass kernel.
+
+\subsubsection{Coarse-graining}
+To represent the resolved scales in a coarse-grained LES, the velocity field is first projected onto a coarser lattice with coarsening factor $m \geq 1$. Given a fine-grid velocity field $\boldsymbol{u}_{\text{fine}}$, the coarse-grained velocity at coarse-grid point $\boldsymbol{x}_c$ is obtained by subsampling one representative fine-grid value from the corresponding $m \times m \times m$ block of sites:
+\begin{equation}
+    \bar{\boldsymbol{u}}(\boldsymbol{x}_c) = \boldsymbol{u}_{\text{fine}}(\boldsymbol{x}_f^{\star}),
+\end{equation}
+where $\boldsymbol{x}_f^{\star}$ is the selected representative fine-grid site in $\text{Block}(\boldsymbol{x}_c)$. In the implementation this is the block corner obtained by integer division of the fine-grid coordinates by $m$. The effective coarse-grid spacing is therefore $\Delta x_{\mathrm{eff}} = m\,\Delta x$, with $\Delta x$ the fine-grid voxel size. When $m = 1$, no coarse-graining is applied and the fine-grid velocity is used directly.
+
+\subsubsection{Kernel filtering}
+The scale-aware QoIs are computed by filtering the coarse-grained velocity field $\bar{\boldsymbol{u}}$ with compact-support kernels. 
+
+For the Gaussian kernel, we use a compact support of radius $4s$ lattice cells in each direction, i.e. offsets $(i,j,k) \in [-4s,4s]^3$, and discrete weights
+\begin{equation}
+    G_s(i,j,k) = \frac{\exp\left(-\frac{i^2+j^2+k^2}{2s^2}\right)}{\sum_{(p,q,r)\in[-4s,4s]^3}\exp\left(-\frac{p^2+q^2+r^2}{2s^2}\right)}.
+\end{equation}
+For the Laplacian kernel, we use a sparse 3D stencil with spacing $s$,
+\begin{equation}
+    (L_s * \boldsymbol{v})(\boldsymbol{x}) = \frac{6}{s^2}\boldsymbol{v}(\boldsymbol{x}) - \frac{1}{s^2}\sum_{\alpha\in\{x,y,z\}}\left[\boldsymbol{v}(\boldsymbol{x}+s\boldsymbol{e}_\alpha)+\boldsymbol{v}(\boldsymbol{x}-s\boldsymbol{e}_\alpha)\right].
+\end{equation}
+
+For non-periodic domains we currently apply the simplest boundary rule: zero-padding semantics. Any stencil sample that falls outside the valid fluid lattice is assigned value zero. This rule is applied uniformly to both Gaussian and Laplacian kernels, matching the implementation requirement to keep boundary treatment simple and explicit in this first integration step.
+
+To avoid the inter-rank bias that occurs when stencil points cross MPI subdomain boundaries, we exchange only the downsampled velocity field across ranks before evaluating the kernels. Stencil samples that lie on another rank are therefore resolved from the owning rank's downsampled data, while only true out-of-domain samples are zero-padded.
+
+\subsubsection{Quantity of interest evaluation}
+For each kernel $K$, we compute filtered velocity $\boldsymbol{v}_K = K*\bar{\boldsymbol{u}}$ and evaluate
+\begin{equation}
+    E_K = \frac{1}{2}\sum_{\boldsymbol{x}\in\Omega_f}\|\boldsymbol{v}_K(\boldsymbol{x})\|^2,
+\end{equation}
+and
+\begin{equation}
+    Z_K = \frac{1}{2}\sum_{\boldsymbol{x}\in\Omega_f}\|\nabla\times\boldsymbol{v}_K(\boldsymbol{x})\|^2.
+\end{equation}
+The curl is discretized by centered differences on the coarse lattice, so the finite-difference denominator uses the effective spacing $\Delta x_{\mathrm{eff}}$,
+\begin{align}
+    \partial_x f(\boldsymbol{x}) &\approx \frac{f(\boldsymbol{x}+\boldsymbol{e}_x)-f(\boldsymbol{x}-\boldsymbol{e}_x)}{2\,\Delta x_{\mathrm{eff}}},\\
+    \partial_y f(\boldsymbol{x}) &\approx \frac{f(\boldsymbol{x}+\boldsymbol{e}_y)-f(\boldsymbol{x}-\boldsymbol{e}_y)}{2\,\Delta x_{\mathrm{eff}}},\\
+    \partial_z f(\boldsymbol{x}) &\approx \frac{f(\boldsymbol{x}+\boldsymbol{e}_z)-f(\boldsymbol{x}-\boldsymbol{e}_z)}{2\,\Delta x_{\mathrm{eff}}},
+\end{align}
+again using zero-padding when neighbor samples are unavailable. Derivatives are computed on the kernel-filtered coarse-grained velocity field, not on the raw velocity. The filtered velocity is converted to physical units before output, and the integrated QoIs are reported in physical units by applying the coarse voxel size $\Delta x_{\mathrm{eff}}$ and the velocity scaling factors implied by the unit converter. For enstrophy, the gradient introduces an additional inverse-length factor, so the physical scaling includes the expected $m^2$ correction from the coarse spacing.
+
+The implementation computes local partial sums per MPI rank and then applies global reductions to obtain domain-integrated QoIs. The resulting trajectories are written as a compact CSV time series with columns
+\begin{equation}
+    [t, E_{G_3}, E_{L_3}, E_{L_1}, Z_{G_3}, Z_{L_3}, Z_{L_1}],
+\end{equation}
+where $t$ is expressed as the solver timestep.
+
+\end{document}

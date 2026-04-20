@@ -44,6 +44,7 @@ SimulationMaster::SimulationMaster(hemelb::configuration::CommandLine & options,
 	latticeBoltzmannModel = NULL;
 	propertyDataSource = NULL;
 	propertyExtractor = NULL;
+	kernelQoiActor = NULL;
 	simulationState = NULL;
 	stepManager = NULL;
 	netConcern = NULL;
@@ -88,6 +89,7 @@ SimulationMaster::~SimulationMaster() {
 	delete outletValues;
 	delete propertyExtractor;
 	delete propertyDataSource;
+	delete kernelQoiActor;
 	delete stabilityTester;
 	delete entropyTester;
 	delete simulationState;
@@ -248,6 +250,20 @@ void SimulationMaster::Initialise() {
 				timings, ioComms);
 	}
 
+	const hemelb::configuration::SimConfig::KernelQoiOutputConfig& kernelQoiConfig =
+		simConfig->GetKernelQoiOutputConfig();
+	if (kernelQoiConfig.enabled)
+	{
+		kernelQoiActor = new hemelb::lb::qoi::KernelQoiActor(*simulationState,
+				*latticeData,
+				latticeBoltzmannModel->GetPropertyCache(),
+				ioComms,
+				*unitConverter,
+				timings,
+				kernelQoiConfig,
+				fileManager->GetDataExtractionPath() + kernelQoiConfig.filename);
+	}
+
 	imagesPeriod = OutputPeriod(imagesPerSimulation);
 
 	stepManager = new hemelb::net::phased::StepManager(2,
@@ -276,6 +292,10 @@ void SimulationMaster::Initialise() {
 
 	if (propertyExtractor != NULL) {
 		stepManager->RegisterIteratedActorSteps(*propertyExtractor, 1);
+	}
+
+	if (kernelQoiActor != NULL) {
+		stepManager->RegisterIteratedActorSteps(*kernelQoiActor, 1);
 	}
 
 	stepManager->RegisterCommsForAllPhases(*netConcern);
@@ -396,6 +416,10 @@ void SimulationMaster::RecalculatePropertyRequirements() {
 	// If extracting property results, check what's required by them.
 	if (propertyExtractor != NULL) {
 		propertyExtractor->SetRequiredProperties(propertyCache);
+	}
+
+	if (kernelQoiActor != NULL) {
+		kernelQoiActor->SetRequiredProperties();
 	}
 }
 

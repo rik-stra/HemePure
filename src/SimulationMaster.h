@@ -24,6 +24,7 @@
 #include "net/phased/StepManager.h"
 #include "net/phased/NetConcern.h"
 #include "geometry/neighbouring/NeighbouringDataManager.h"
+#include "lb/qoi/KernelQoiActor.h"
 
 class SimulationMaster
 {
@@ -101,6 +102,7 @@ class SimulationMaster
 
     hemelb::extraction::IterableDataSource* propertyDataSource;
     hemelb::extraction::PropertyActor* propertyExtractor;
+    hemelb::lb::qoi::KernelQoiActor* kernelQoiActor;
 
     hemelb::net::phased::StepManager* stepManager;
     hemelb::net::phased::NetConcern* netConcern;

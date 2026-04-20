@@ -31,6 +31,8 @@ add_library(hemelb_lb
 	lattices/D3Q27.cc
 	lattices/D3Q15i.cc
 	MacroscopicPropertyCache.cc
+	qoi/KernelScaleAwareQoi.cc
+	qoi/KernelQoiActor.cc
 	SimulationState.cc
 	StabilityTester.cc
 	InitialCondition.cc

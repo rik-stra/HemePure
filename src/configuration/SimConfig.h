@@ -81,6 +81,21 @@ namespace hemelb
             bool doIncompressibilityCheck; ///< Whether to turn on the IncompressibilityChecker or not
         };
 
+          struct KernelQoiOutputConfig
+          {
+            KernelQoiOutputConfig() :
+              enabled(false), frequency(1), start(0), stop(1000000000), filename("kernel_qoi.csv"), coarseningFactor(1)
+            {
+            }
+
+            bool enabled;
+            unsigned long frequency;
+            unsigned long start;
+            unsigned long stop;
+            std::string filename;
+            int coarseningFactor;  ///< Coarse-graining factor (1 = no coarsening)
+          };
+
         static SimConfig* New(const std::string& path);
 
       protected:
@@ -211,6 +226,11 @@ namespace hemelb
          */
         const MonitoringConfig* GetMonitoringConfiguration() const;
 
+        const KernelQoiOutputConfig& GetKernelQoiOutputConfig() const
+        {
+          return kernelQoiOutputConfig;
+        }
+
       protected:
         /**
          * Create the unit converter - virtual so that mocks can override it.
@@ -310,6 +330,7 @@ namespace hemelb
          * @param monEl in memory representation of <monitoring> xml element
          */
         void DoIOForMonitoring(const io::xml::Element& monEl);
+        void DoIOForKernelQoiOutput(const io::xml::Element& qoiEl);
 
         /**
          * Reads configuration of steady state flow convergence check from XML file
@@ -343,6 +364,7 @@ namespace hemelb
         bool hasColloidSection;
         PhysicalPressure initialPressure_mmHg; ///< Pressure used to initialise the domain
         MonitoringConfig monitoringConfig; ///< Configuration of various checks/tests
+        KernelQoiOutputConfig kernelQoiOutputConfig;
 
       protected:
         // These have to contain pointers because there are multiple derived types that might be

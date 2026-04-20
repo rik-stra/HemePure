@@ -1,0 +1,402 @@
+\documentclass[]{elsarticle}
+\usepackage{a4wide}
+\usepackage{csquotes}
+
+\usepackage[dvipsnames]{xcolor}
+\usepackage{graphicx,color,booktabs,listings,caption,subcaption,tikz,amsmath,amssymb,placeins,subfiles,tabto, parskip}
+\usetikzlibrary{fit, positioning, backgrounds}
+
+\usepackage[titletoc]{appendix}
+\usepackage{algpseudocode}
+\usepackage{algorithm}
+\usepackage{esvect}
+\usepackage{gensymb}
+\usepackage{inconsolata}
+\usepackage{hyperref}
+\pdfstringdefDisableCommands{%
+  \def\corref#1{}%
+  \def\cortext#1#2{}%
+  \def\affiliation#1#2{}%
+  \def\@corref{}%
+  \def\cnotenum#1{}%
+}
+\usepackage{natbib}
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue,
+    filecolor=magenta,      
+    urlcolor=cyan,
+    pdftitle={Reduced Subgrid-Scale Terms for Turbulence Simulations with the Lattice Boltzmann Method},
+    pdfpagemode=FullScreen,
+    }
+\usepackage{pdfpages}
+\usetikzlibrary{math}
+\usepackage{arydshln}
+\newcommand{\D}{\mathrm{d}}
+\DeclareMathOperator*{\argmax}{arg\,max}
+\DeclareMathOperator*{\argmin}{arg\,min}
+
+\title{Reduced Subgrid-Scale Terms for Turbulence Simulations with the Lattice Boltzmann Method}
+\date{\today}
+
+
+\begin{document}
+\begin{frontmatter}
+\author[inst1]{Rik Hoekstra \corref{cor1}}
+\affiliation[inst1]{organization={Centrum Wiskunde \& Informatica, Scientific Computing group},%Department and Organization
+            addressline={Science Park 123}, 
+            city={Amsterdam},
+            postcode={1098 XG}, 
+            country={the Netherlands}}
+
+
+\cortext[cor1]{Corresponding author, e-mail address: rik.hoekstra@cwi.nl}
+
+\begin{abstract}
+Turbulent flows involve a wide range of interacting scales, and direct numerical simulation is prohibitively expensive when all of them must be resolved. Large eddy simulation offers a pragmatic alternative, but its accuracy depends on the quality of the subgrid-scale closure. In this paper, we adapt the Tau-orthogonal (TO) framework to the lattice Boltzmann method (LBM) and model SGS effects through the time dynamics of a small set of integrated quantities of interest, namely scale-aware kinetic energy and enstrophy. The SGS forcing is decomposed into analytically derived spatial patterns, so each QoI is controlled by one scalar correction coefficient. Training data are obtained with a predictor-corrector tracking procedure that nudges coarse simulations toward reference QoI trajectories without requiring a differentiable solver. We then fit lightweight linear time-series models with multivariate Gaussian residuals, yielding autonomous SGS corrections with $O(h\,N_Q^2)$ parameters. We further replace sharp Fourier filters with compact convolution-based Gaussian and Laplacian kernels, which improves flexibility for non-periodic and non-square domains. On two-dimensional Kolmogorov flow at $Re=10{,}000$, the resulting TO-LRS closures yield stable and statistically accurate online LES when trained on sufficient data, and outperform a calibrated Smagorinsky baseline in summed KS-distance for most settings.
+\end{abstract}
+\end{frontmatter}
+
+\input{todo_extension_list}
+
+\input{introduction}
+%\section{introduction}
+
+\section{The lattice Boltzmann method}\label{sec:lattice-boltzmann-method}
+The lattice Boltzmann method (LBM) is a class of fluid-flow solvers rooted in the mesoscopic Boltzmann equation; for a comprehensive introduction we refer to \cite{kruger_lattice_2017}. Unlike traditional solvers that discretize the macroscopic conservation laws, LBM describes the evolution of the particle distribution function $f(\boldsymbol{x}, \boldsymbol{\xi}, t)$, representing the density of particles with velocity $\boldsymbol{\xi}$ at position $\boldsymbol{x}$ and time $t$. Discretizing this equation in velocity space, physical space and time yields the lattice Boltzmann equation
+\begin{equation} \label{eq:lattice-boltzmann-equation}
+    f_i(\boldsymbol{x}+\boldsymbol{c}_i \Delta t, t+\Delta t)-f_i(\boldsymbol{x}, t)=\Omega_i(\boldsymbol{f}(\boldsymbol{x}, t)) + f^{\text{ext}}_i.
+\end{equation}
+At each time step, particles $f_i(\boldsymbol{x}, t)$ with discrete velocity $\boldsymbol{c}_i$ undergo a local collision governed by $\Omega_i$, an optional external forcing $f^{\text{ext}}_i$, and then stream to the neighboring lattice site $\boldsymbol{x}+\boldsymbol{c}_i \Delta t$. The velocity space is discretized into a small set of discrete velocities $\{\boldsymbol{c}_i\}$; in this work we use the D2Q9 stencil, which comprises nine velocities with corresponding weights $w_i$ and lattice speed of sound $c_s$. Mass and momentum are recovered from the discrete distributions as:
+\begin{equation}
+    \rho = \sum_i f_i, \quad \rho \boldsymbol{u} = \sum_i f_i \boldsymbol{c}_i.
+\end{equation}
+
+We adopt the BGK single-relaxation-time collision model
+\begin{equation}
+    \Omega_i(f)=-\frac{f_i-f_i^{\text{eq}}}{\tau} \Delta t,
+\end{equation}
+which relaxes the populations toward the local equilibrium $f^\text{eq}_i(\rho, \boldsymbol{u})$\footnote{The equilibrium is $f_i^{\text{eq}}(\rho, \boldsymbol{u})=w_i \rho\left(1+\frac{\boldsymbol{u} \cdot \boldsymbol{c}_i}{c_{\text{s}}^2}+\frac{\left(\boldsymbol{u} \cdot \boldsymbol{c}_i\right)^2}{2 c_{\text{s}}^4}-\frac{\boldsymbol{u} \cdot \boldsymbol{u}}{2 c_{\text{s}}^2}\right)$.} at a rate set by the relaxation time $\tau$.
+Through the Chapman--Enskog expansion, the BGK lattice Boltzmann equation recovers the incompressible Navier--Stokes equations to second-order accuracy in the low-Mach-number limit, with kinematic viscosity
+\begin{equation}
+    \nu = c_s^2\left( \tau - \frac{\Delta t}{2} \right).
+\end{equation}
+
+\subsection{Collision, forcing and streaming}
+Typically, the lattice Boltzmann equation is split into a local collision step, which produces post-collision distributions $\boldsymbol{f}^\text{p}$, followed by a streaming step that propagates them along the lattice. Incorporating an external force through the exact-difference method \cite{kupershtokh_equations_2009} introduces an intermediate forcing step, so that \eqref{eq:lattice-boltzmann-equation} becomes
+\begin{align}
+    & f_i^{\text{a}}(\boldsymbol{x}, t)=\left(1-\frac{\Delta t}{\tau}\right) f_i(\boldsymbol{x}, t)+ \frac{\Delta t}{\tau} f_i^{\text{eq}}(\rho, \boldsymbol{u}), \\
+    &f_i^{\text{p}}(\boldsymbol{x}, t) = f_i^{\text{a}}(\boldsymbol{x}, t)    
+    + \Delta t \bigg( f_i^{\text{eq}}(\rho, \boldsymbol{u} + \Delta \boldsymbol{u}_F) - f_i^{\text{eq}}(\rho, \boldsymbol{u})\bigg), \label{eq:collide-and-stream} \\
+    & f_i\left(\boldsymbol{x}+\boldsymbol{c}_i \Delta t, t+\Delta t\right)=f_i^{\text{p}}(\boldsymbol{x}, t),
+\end{align}
+where $\Delta \boldsymbol{u}_F$ denotes the local velocity change due to the forcing and is calculated from the force density $\boldsymbol{F}$ as $\Delta \boldsymbol{u}_F = \boldsymbol{F}\Delta t/\rho$.
+
+\section{Coarse graining the lattice Boltzmann equation}\label{sec:coarse-graining-lattice-boltzmann-equation}
+We now formulate LES in the LBM setting. The coarse grid reduces computational cost, but the influence of unresolved scales must be represented by an SGS model.
+
+Following \cite{ortali_kinetic_2025} and \cite{fischer_optimal_2025}, we obtain a coarse-grained flow field by projecting the high resolution field directly onto the coarser lattice. Denoting projected variables by an over-bar and the projection onto an $m$-times coarser grid by $\phi_m$, we have
+\begin{equation}
+    \overline{\boldsymbol{f}} = \phi_m \boldsymbol{f}, \quad 
+    \overline{\boldsymbol{u}} = \phi_m \boldsymbol{u}, \quad
+    \overline{\rho} = \phi_m \rho.
+\end{equation}
+
+On this coarse grid we run implicit LES with a coarse lattice Boltzmann solver
+\begin{align}
+     &\tilde{f}_i^{\text{a}}(\boldsymbol{x}, t)=\left(1-\frac{\Delta t}{\tilde{\tau}}\right) \tilde{f}_i(\boldsymbol{x}, t)+ 
+    \frac{\Delta t}{\tilde{\tau}} \tilde{f}_i^{\text{eq}}(\rho, \boldsymbol{v}), \label{eq:LES-1}\\
+    &\tilde{f}_i^{\text{p}}(\boldsymbol{x}, t) = \tilde{f}_i^{\text{a}}(\boldsymbol{x}, t) + \Delta t \bigg( \tilde{f}_i^{\text{eq}}(\rho, \boldsymbol{v} + \Delta \boldsymbol{v}_F + \Delta \boldsymbol{v}_{SGS}) - \tilde{f}_i^{\text{eq}}(\rho, \boldsymbol{v})\bigg), \label{eq:LES-2}\\
+    &\tilde{f}_i\left(\boldsymbol{x}+\boldsymbol{c}_i \Delta t, t+\Delta t\right)=\tilde{f}_i^{\text{p}}(\boldsymbol{x}, t), \label{eq:LES-3}
+\end{align}
+where $\tilde{f}$ and $\boldsymbol{v}$ denote the mesoscopic and macroscopic solution fields of the LES, respectively. Here $\Delta t$ \footnote{In practice both simulations are performed in their own set of lattice units, where the equations are scaled such that $\Delta t = 1$, as described in Section \ref{sec:governing eqations kolmogorov flow}.} is $m$ times larger than in the DNS. 
+
+The term $\Delta \boldsymbol{v}_{SGS}$ is a subgrid-scale forcing that corrects for the unresolved dynamics.
+
+We model the subgrid contribution as a macroscopic forcing rather than a modification of the collision operator. This setup is also used in \cite{khan_physics-constrained_2026} and preserves lattice symmetries by construction.
+
+For clarity, we use the following notation throughout the paper: $\boldsymbol{u}$ is the DNS velocity, $\overline{\boldsymbol{u}}=\phi_m\boldsymbol{u}$ is the projected DNS velocity on the coarse grid, and $\boldsymbol{v}$ is the LES velocity computed on that grid. Superscripts indicate solver stage: ``$\text{a}$'' for post-collision/pre-forcing, ``$\text{p}$'' for post-forcing/pre-streaming.
+
+The objective of an SGS model is to make the LES velocity approximate the projected fine-grid field, i.e.\ $\boldsymbol{v}(\boldsymbol{x},t) \approx \overline{\boldsymbol{u}(\boldsymbol{x}, t)}$. Because turbulent flows are chaotic, pointwise agreement over long time horizons is unattainable; more realistic targets include long decorrelation times when both simulations share the same initial conditions, or accurate reproduction of statistical quantities such as the energy spectrum. In this work, we pursue the latter perspective and focus on the time evolution of a small set of integrated quantities of interest.
+
+\section{The Tau-orthogonal method for reduced SGS modeling}\label{sec:tau-orthogonal-method-reduced-sgs-modeling}
+The SGS forcing field $\Delta \boldsymbol{v}_{SGS}(\boldsymbol{x},t)$ has as many degrees of freedom as the velocity field itself, making it a high-dimensional modeling target. The Tau-orthogonal (TO) method reduces this complexity by modeling only the time dynamics of a small set of spatially integrated quantities of interest (QoIs):
+\begin{equation} \label{eq:qoi-def}
+    Q = \int_{\Omega} q(\boldsymbol{v}) \D \boldsymbol{x}.
+\end{equation}
+
+The TO method approximates the SGS term as a weighted sum of spatial patterns, each corresponding to a QoI:
+\begin{equation} \label{eq:TO-ansatz}
+    \Delta \boldsymbol{v}_{SGS}(t^n) = \sum_{i=1}^{N_Q} \tau_i(t^n) \boldsymbol{O}_i(\boldsymbol{v}),
+\end{equation}
+where $N_Q$ is the number of QoIs, $\tau_i(t^n)$ are time-dependent scalar coefficients representing the unresolved contributions to the $i$-th QoI at the $n$-th solver step, and $\boldsymbol{O}_i(\boldsymbol{v})$ are spatial patterns chosen such that each QoI is independently controlled. This is achieved by enforcing the following orthogonality conditions:
+\begin{equation} \label{eq:orthogonality}
+    \int_\Omega \frac{\delta q_i}{\delta \boldsymbol{v}} \cdot \boldsymbol{O}_j(\boldsymbol{v}) \D \boldsymbol{x} = 0 \quad \text{for } i \neq j,
+\end{equation}
+where $\delta q_i / \delta \boldsymbol{v}$ is the weak functional derivative of $q_i(\boldsymbol{v})$ with respect to $\boldsymbol{v}(\boldsymbol{x})$, i.e. \ $\int_\Omega q_i \frac{\partial {\varphi}}{\partial \boldsymbol{v}} \D \boldsymbol{x}=-\int_\Omega \frac{\delta q_i }{ \delta \boldsymbol{v}} \boldsymbol{\varphi} \D \boldsymbol{x}$ for all test functions $\varphi$. The orthogonality conditions ensure that each spatial pattern $\boldsymbol{O}_i$ influences only its associated QoI, so that every unresolved contribution can be controlled independently through its scalar coefficient $\tau_i$.
+
+To see how these coefficients enter the dynamics, consider the $i$-th QoI over a single LES step. Here we consider an LES time-step between successive post-collision states: $\boldsymbol{v}^{p,n-1}$ and $\boldsymbol{v}^{p,n}$. Advancing the solver (\eqref{eq:LES-3}, \eqref{eq:LES-1}, \eqref{eq:LES-2}) without SGS forcing produces the predicted velocity $\boldsymbol{v}^{p,n^*}$; the SGS forcing $\Delta \boldsymbol{v}_{SGS}$ then accounts for the unresolved contribution
+\begin{equation}
+    Q_i(\boldsymbol{v}^{p,n}) = Q_i(\boldsymbol{v}^{p,n^*}+\Delta \boldsymbol{v}_{SGS}(t^{n})). 
+\end{equation}
+A simple first-order Taylor expansion gives
+\begin{equation}
+    Q_i(\boldsymbol{v}^{p,n}) \approx Q_i(\boldsymbol{v}^{p,n^*})+ \int_\Omega \frac{\delta q_i}{\delta \boldsymbol{v}} \cdot \Delta \boldsymbol{v}_{SGS}(t^{n}) \ \D \boldsymbol{x}. 
+\end{equation}
+
+Inserting our SGS model \eqref{eq:TO-ansatz} and using the orthogonality conditions \eqref{eq:orthogonality}, we get:
+\begin{equation}\label{eq:influence-SGS-term-on-LF-QoI-trajectories}
+    Q_i(\boldsymbol{v}^{p,n}) - Q_i(\boldsymbol{v}^{p,n^*}) \approx
+    \tau_i(t^n) \int_\Omega \frac{\delta q_i}{\delta \boldsymbol{v}} \cdot \boldsymbol{O}_i(\boldsymbol{v}^{p,n^*}) \ \D \boldsymbol{x}. 
+\end{equation}
+
+This formulation allows us to model unresolved dynamics in QoI trajectories as a low-dimensional time-series problem, shifting the burden of subgrid modeling from high-dimensional spatial fields to a set of time series.
+
+\paragraph{Post-collision based QoI tracking}
+We use post-collision states in this setup because forcing is applied in the collision step, which yields a direct predictor-corrector update for SGS corrections. Post-streaming states are typically regarded as the physical states \cite{kruger_lattice_2017}, but post-collision fields are smoother due to relaxation toward equilibrium and are therefore easier to reproduce on coarse grids.
+
+\subsection{Scale-aware quantities of interest}
+We select two physically motivated QoIs: kinetic energy and enstrophy. These quantities characterize the spectral distribution of turbulent fluctuations and their transfer across scales. On the computational domain $\Omega$ they are defined as
+\begin{align}
+    E &= \frac{1}{2} \int_\Omega \|\bar{\boldsymbol{u}}\|^2 \, \D \boldsymbol{x}, \\
+    Z &= \frac{1}{2} \int_\Omega \bar{{\omega}}^2 \, \D\boldsymbol{x} = \frac{1}{2} \int_\Omega  \text{curl}( \bar{\boldsymbol{u}})^2 \, \D\boldsymbol{x}.
+\end{align}
+During LES, $\bar{\boldsymbol{u}}$ is replaced by the LES velocity $\boldsymbol{v}$.
+
+To represent interactions across scales, we make these QoIs scale-aware through filtering. In previous work we used sharp Fourier filters that partition the spectrum into wavenumber bins $[l, m]$:
+\begin{equation} \label{eq:scale-aware-energy-fourier}
+    E_{[l, m]}
+    =  \frac{1}{2} \int_\Omega \| R_{[l, m]} \bar{\boldsymbol{u}} \|^2 \ \D\boldsymbol{x}, \quad Z_{[l, m]}
+    =  \frac{1}{2} \int_\Omega  \left(R_{[l, m]} \bar{{\omega}}\right)^2 \ \D\boldsymbol{x}, 
+\end{equation}
+Here we introduce the scale-aware sharp Fourier filter $R_{[l,m]}$
+\begin{align}
+    R_{[l,m]} &= \mathcal{F}^{-1} \hat{R}_{[l,m]} \mathcal{F}, \nonumber\\
+    \hat{R}_{[l, m]} \,\hat{\boldsymbol{y}}_{\bf k} &=
+    \begin{cases}
+        \hat{\boldsymbol{y}}_{\mathbf{k}} & \text{if} \quad l-\frac{1}{2} \leq \lVert{\bf k}\rVert_2 < m + \frac{1}{2} \\
+        0 & \text{otherwise}
+    \end{cases},
+\end{align}
+where we denote the discrete Fourier transform of the solution field by $\hat{\boldsymbol{y}} = \mathcal{F}\bar{\boldsymbol{y}}$, and $\mathbf{k}$ are the wavenumber vectors in Fourier space. Note that these filters can only be applied to square, periodic domains.
+
+Fourier filters are restricted to rectangular periodic domains. To improve geometric flexibility, we introduce scale-aware filters based on convolutions with compact kernels in physical space. We use two complementary filters: a Gaussian low-pass filter and a Laplacian-based high-pass filter. The Gaussian kernel with standard deviation $s$ is
+\begin{equation}
+    G_s(i,j) = \frac{\exp\left( -\frac{i^2+j^2}{2 s^2} \right)}{\sum_{i,j}\exp\left( -\frac{i^2+j^2}{2 s^2} \right)}, \quad \text{for } i,j \in [-4s, 4s].
+\end{equation}
+
+The second kernel is based on a discrete second-order Laplacian stencil:
+\begin{equation}
+    L_s = \frac{1}{16 s^2} \text{kron}\left(
+    \left[ \begin{array}{rrrrr}
+     0 & 0 & 1 & 0 & 0 \\
+     0 & 0 & -4 & 0 & 0 \\
+     1 & -4 & 12 & -4 & 1  \\
+     0 & 0 & -4 & 0 & 0  \\
+     0 & 0 & 1 & 0 & 0
+     \end{array} \right], \mathbf{J}_s \right),
+\end{equation}
+where $s$ is a scaling parameter and $\mathbf{J}_s$ is a square matrix of ones. This kernel acts as a high-pass filter in frequency space \cite{nathen_adaptive_2018}. Combining low-pass and high-pass kernels lets the QoIs capture both large-scale structures and fine-scale fluctuations.
+
+Figures \ref{fig:fourier-filters} and \ref{fig:kernel-filters} compare the effect of two sets of these filters on a fully turbulent periodic flow field. They show the vorticity field and energy spectrum. Figure \ref{fig:fourier-filters} shows the effect of applying a set of Fourier filters [$R_{[0,12]}$, $R_{[13,32]}$, $R_{[33,128]}$]. Figure \ref{fig:kernel-filters} shows the effect of applying a set of kernel filters with kernels [$G_3$, $L_3$, $L_1$]. In this case the kernels are applied with periodic padding.
+
+\begin{figure}
+    \centering
+    \includegraphics[width=0.8\textwidth]{figures/fourier_filters_plotted.png}
+    \caption{Effect of applying Fourier filters.}
+    \label{fig:fourier-filters}
+\end{figure}
+\begin{figure}
+    \centering
+    \includegraphics[width=0.8\textwidth]{figures/kernel_filters_plotted.png}
+    \caption{Effect of applying kernel filters.}
+    \label{fig:kernel-filters}
+\end{figure}
+
+\subsection{Constructing spatial patterns}
+
+The spatial patterns $\boldsymbol{O}_i$ must satisfy the orthogonality constraints \eqref{eq:orthogonality}. We construct them from the functional derivatives (sensitivities) $\delta q_i /\delta {\boldsymbol{v}}$ of the scale-aware QoIs. Below, we derive closed-form expressions for these sensitivities under a general kernel filter
+\begin{equation}
+    R_i \boldsymbol{v} = K_i * \boldsymbol{v}.
+\end{equation}
+Note that the sharp Fourier filter also fits this category, albeit with a non-compact kernel.
+
+For the scale-aware energy $E_{R_i}$, the sensitivity with respect to the velocity field $\boldsymbol{v}$ is found by considering the first order terms in the variation:
+\begin{align}
+    E_{R_i} + \delta E_{R_i} &= \int_\Omega \frac{1}{2} R_{i} (\boldsymbol{v} + \delta \boldsymbol{v}) \cdot R_{i} (\boldsymbol{v} + \delta \boldsymbol{v}) \, \D \boldsymbol{x} \nonumber\\
+    \delta E_{R_i} &= \int_\Omega R_{i} \boldsymbol{v} \cdot R_{i}  \delta \boldsymbol{v} \, \D \boldsymbol{x} \nonumber \\
+    &= \int_\Omega (R_{i}^* R_{i} \boldsymbol{v}) \cdot \delta \boldsymbol{v} \, \D \boldsymbol{x},
+\end{align}
+where $R_{i}^*$ denotes the adjoint of the filter operator. Since both the sharp Fourier filters and the symmetric convolution kernels ($G_s$ and $L_s$) are self-adjoint, we have $R_{i}^* = R_{i}$, which gives
+\begin{equation}
+    \frac{\delta q_{E,R_i}}{\delta \boldsymbol{v}} = R_{i} R_i \boldsymbol{v}.
+\end{equation}
+
+For the scale-aware enstrophy $Z_{R_i}$, the derivation is less straightforward due to the curl operator. The variation is:
+\begin{align}
+    Z_{R_i} + \delta Z_{R_i} &= \int_\Omega \frac{1}{2}(R_i \ \text{curl}(\boldsymbol{v}+\delta \boldsymbol{v}))^2 \, \D \boldsymbol{x} \nonumber\\
+    \delta Z_{R_i} &=\int_\Omega (R_i \ \text{curl}(\boldsymbol{v})) \, (R_i \, \text{curl}(\delta \boldsymbol{v})) \, \D \boldsymbol{x} \nonumber \\
+    &=\int_\Omega (R_i^* R_i \ \text{curl}(\boldsymbol{v})) \, \text{curl}(\delta \boldsymbol{v}) \, \D \boldsymbol{x}.
+\end{align}
+Applying the adjoint of the 2D curl operator\footnote{In three dimensions the curl operator is self-adjoint.}, $\text{curl}^* \omega = (\partial_y \omega, -\partial_x \omega)^T$, transfers the differential operator onto the filtered vorticity field under the assumption of vanishing boundary terms:
+\begin{align}
+    \delta Z_{R_i} &= \int_\Omega \text{curl}^*(R_i^* R_i \ \text{curl}(\boldsymbol{v})) \, \delta \boldsymbol{v} \, \D \boldsymbol{x}.
+\end{align}
+We thus obtain:
+\begin{equation}
+    \frac{\delta q_{Z,R_i}}{\delta \boldsymbol{v}} = \begin{pmatrix} \partial_y (R_{i} R_i{\omega}) \\ -\partial_x (R_{i}R_i \omega) \end{pmatrix}.
+\end{equation}
+
+Finally, the spatial patterns $\boldsymbol{O}_i$ are constructed as:
+\begin{equation}
+    \boldsymbol{O}_i = \sum_{j=1}^{N_Q} c_{ij} \mathbf{V}_j(\boldsymbol{v}), \quad \textrm{for}\;\;\; 1 \leq i \leq N_Q,
+\end{equation}
+where the functionals $\mathbf{V}_j$ are chosen equal to the functional derivatives derived above. The coefficients $c_{ij}$ are determined from the orthogonality constraints in \eqref{eq:orthogonality}, requiring $c_{ii} = 1$. This choice of basis functions allows the spatial patterns to be written in closed form.
+
+\subsection{Tracking}
+Equation~\eqref{eq:influence-SGS-term-on-LF-QoI-trajectories} provides a direct mechanism for nudging an LES toward prescribed QoI trajectories. Given reference values $Q_i^{ref}(t^n)$, we adopt a predictor-corrector procedure: first advance the solver without SGS forcing to obtain $Q_i(\boldsymbol{v}^{p,n^*})$, then compute the coefficient $\tau_i(t^n)$ from the discrepancy with the reference:
+\begin{align}
+    dQ_i^{n} = \left(Q_i^{ref}(t^{n}) - Q_i(\boldsymbol{v}^{p,n^*}) \right), \label{eq:dQ-from-ref} \\
+    \tau_i(t^n) =  dQ_i^{n} / \left( \int_\Omega \frac{\delta q_i}{\delta \boldsymbol{v}}\mid_{\boldsymbol{v}^{p,n^*}} \cdot \, \boldsymbol{O}_i(\boldsymbol{v}^{p,n^*}) \ \D \boldsymbol{x} \right). \label{eq:tau-from-dQ-for-tracking}
+\end{align}
+Here $dQ_i^{n}$ is the SGS correction to the $i$-th QoI at
+ the end of the $n$-th time step.
+
+Figure \ref{fig:tracking-diagram} illustrates how this setup can be used to track QoI reference trajectories from a high-fidelity simulation.
+
+\begin{figure}
+    \centering
+    \resizebox{\textwidth}{!}{
+    \input{tikz_diagram1_tracking_HF_new}
+    }
+    \caption{Tracking a high-fidelity simulation. Here $\Delta t$ is the time step of the HF solver and $t_{n-1}$ and $t_n$ refer to the time steps of the LF solver, eg $t_n = t_{n-1}+m\Delta t$. Note that $dQ$ is determined based on the difference between the post-collision states.}
+    \label{fig:tracking-diagram}
+\end{figure}
+
+This nudging approach ensures that the low-fidelity solver remains dynamically consistent with the reference trajectory while allowing us to extract statistical properties of the SGS term.
+
+While this tracking procedure is useful for understanding and validating the SGS dynamics, it requires access to reference trajectories from a high-fidelity simulation at every time step during coarse-grained LES. To develop an effective SGS model for practical applications, we must replace the reference-based corrections with learned predictions. 
+
+\subsection{Time-series models for SGS correction} \label{section:Time-Series Models for SGS Correction}
+
+For practical applications, the SGS model must predict corrections without access to reference trajectories. We therefore train multivariate time-series models on the tracking data, learning the mapping from past QoI states to unresolved-scale corrections.
+
+The overall setup is summarized in Figure~\ref{fig:pred-cor-sgs-model-setup}, which shows the correction process in the predictor-corrector framework. Here we denote the QoI vectors at time step $n$ by $\boldsymbol{q}^n = Q(\boldsymbol{v}^{p,n})$ and $\boldsymbol{q}^{n^*} = Q(\boldsymbol{v}^{p,n^*})$.
+
+\begin{figure}
+    \centering
+    \input{tikz_diagram2_pred_cor_sgs}
+    
+    \caption{Predictor-corrector subgrid-scale term setup. During tracking, the corrections $dQ$ are computed from \eqref{eq:dQ-from-ref}. We train models to predict $dQ^{n}$ from historical inputs.}
+    \label{fig:pred-cor-sgs-model-setup}
+\end{figure}
+
+To model unresolved dynamics, we use a linear regression with stochastic residuals (LRS) \cite{hoekstra_reduced_2026}. The model predicts corrected QoIs from a history of previous states:
+\begin{align}
+    \mathbf{LRS}(\underline{\mathbf{q}}_h) = \underline{\mathbf{q}}_h C + \boldsymbol{\eta}, \quad \boldsymbol{\eta} \sim \mathcal{N}(\boldsymbol{\mu}, \Sigma), \nonumber\\
+    \underline{\mathbf{q}}_h = [\mathbf{q}^{n-1}, \dots, \mathbf{q}^{n-h}, \mathbf{q}^{n^*}, \mathbf{q}^{n-1^*}, \dots, \mathbf{q}^{n-h^*}, 1], \label{eq:Linear-Regression-with-Stochastic-Residuals}
+\end{align}
+where $\underline{\mathbf{q}}_h$ contains all model inputs for history length $h$, $C \in \mathbb{R}^{ len(\underline{\mathbf{q}}_h) \times N_Q}$ is a learnable regression matrix, and $\mathcal{N}$ is an $N_Q$-dimensional multivariate Gaussian distribution. The final entry ``1" provides a bias term. We fit the model to predict corrected QoIs $\mathbf{q}^{n}$.
+
+We compute $C$ by regularized least squares with a Frobenius penalty to improve long-term stability of the coupled LES-SGS system:
+\begin{equation}
+    C = \argmin_{X \in \mathbb{R}^{ len(\underline{\mathbf{q}}_h) \times N_Q}} \frac{1}{2} \lVert \mathbf{Q}_h X - \mathbf{Q} \rVert_F^2 + \lambda \lVert X \rVert_F^2,
+\end{equation}
+where the $n$-th rows of $\mathbf{Q}_h$ and $\mathbf{Q}$ are $\underline{\mathbf{q}}_h^n$ and $\mathbf{q}^{n}$ from the training data points, and $\lambda$ is the regularization parameter.
+Before fitting the models, we standardize the inputs and outputs with respect to the variance of the reference trajectories.
+
+\subsection{Final integration into LES}
+Replacing the reference-dependent tracking with autonomous predictions from the trained time-series model yields a fully independent SGS closure. The resulting TO-LRS model is remarkably parsimonious: it has only two hyperparameters---the history length $h$ and the regularization strength $\lambda$---and $O(h \, {N_Q}^2)$ learnable parameters, orders of magnitude fewer than typical neural-network-based SGS closures. Because the model predicts corrections to physically meaningful QoIs rather than to high-dimensional fields, its outputs remain directly interpretable.
+
+
+
+\section{The Smagorinsky model}\label{sec:smagorinsky-model}
+The Smagorinsky model is a widely used algebraic SGS closure in which the unresolved stresses are represented by an eddy viscosity proportional to the local strain rate \cite{smagorinsky_general_1963}:
+\begin{equation}
+    \nu_{\text{eff}} = \nu + c_{smag}^2 \Delta x^2 \sqrt{2 S_{ij} S_{ij}},
+\end{equation}
+where
+\begin{equation}
+    S_{ij} = \frac{1}{2}\left(\partial_i v_j + \partial_j v_i\right)
+\end{equation}
+is the resolved strain-rate tensor, and $c_{smag}$ is the Smagorinsky constant.
+
+In the lattice Boltzmann method this is implemented using an updated local relaxation time
+\begin{equation}
+    \tau_{\text{eff}} = \frac{\nu_{\text{eff}}}{c_s^2} + \frac{1}{2}.
+\end{equation}
+The strain-rate tensor can be calculated from the non-equilibrium part of the distribution functions
+\begin{equation} \label{eq:strain-from-non-equilibrium}
+    S_{ij} = -\frac{1}{2 \rho c_s^2 \tau_{\text{eff}}} \Pi^{\text{neq}}_{ij}, \quad \Pi^{\text{neq}}_{ij} = \sum_k c_{ki} c_{kj} (f_k - f_k^{\text{eq}}).
+\end{equation}
+After some algebraic substitutions, the effective relaxation time in lattice units is given by \cite{gkoudesnes_implementation_nodate}:
+\begin{equation}
+    \tau_{\text{eff}} = \frac{1}{2} \left( \tau + \sqrt{\tau^2 + \frac{18 c_{smag}^2 \lvert \Pi^{\text{neq}}_{ij} \rvert}{\rho}}\right).
+\end{equation}
+Note that this final form depends on whether one uses $\tau_{\text{eff}}$ or $\tau$ in equation \eqref{eq:strain-from-non-equilibrium}, where the choice of $\tau_{\text{eff}}$ creates an implicit formula.
+
+In Section \ref{sec:kolmogorov-flow}, this model is calibrated and used as baseline model for comparison against TO-based closures.
+
+\section{Kolmogorov flow}\label{sec:kolmogorov-flow}
+Two-dimensional Kolmogorov flow is a standard test case for data-driven subgrid-scale modeling \cite{fischer_optimal_2025, kochkov_machine_2021, hoekstra2024Reduced_data-driven}. A sinusoidal forcing along one axis generates a shear flow that subsequently breaks up into isotropic turbulence.
+
+\subsection{Governing equation} \label{sec:governing eqations kolmogorov flow}
+We consider 2D Kolmogorov flow on a doubly-periodic square domain $[0, 2\pi] \times [0, 2\pi]$:
+\begin{align}
+    \frac{\partial \boldsymbol{u}}{\partial t} + \boldsymbol{u} \cdot \nabla \boldsymbol{u} &= \frac{1}{Re} \nabla^2 \boldsymbol{u} - \frac{1}{\rho} \nabla p + \boldsymbol{f}, \\
+    \nabla \cdot \boldsymbol{u} &= 0,
+\end{align}
+where $\boldsymbol{u}$ denotes the velocity field, $Re$ the Reynolds number, $p$ the pressure field and $\rho$ the fluid density which we set to 1. The forcing term is given by
+\begin{equation}
+    \boldsymbol{f} = \sin(4y) \boldsymbol{e}_x - 0.1 \boldsymbol{u}.
+\end{equation}
+Here $\boldsymbol{e}_x$ denotes the unit vector in the x-direction. %Following \cite{fischer_optimal_2025} we define characteristic length scale $L=2\pi/4$ and characteristic velocity $U=4$.
+
+\paragraph{Lattice units}
+Lattice Boltzmann simulations are performed in lattice units, denoted in this section by a star, e.g.\ $\boldsymbol{u}^\star$ and $t^\star$. We choose conversion factors from physical to lattice units such that $\Delta t^\star = \Delta x^\star = \rho^\star = 1$ and ${c_s^*}^2 = 1/3$. A complete set of conversion factors for length, velocity, and density for an $N \times N$ LBM simulation is
+\begin{equation}
+    C_l = \frac{2\pi}{N}, \quad C_u=\frac{4}{0.1 c_s^{\star 2}}, \quad C_\rho = \rho = 1.
+\end{equation}
+Note that the conversion factor for velocity is independent of the grid resolution. This allows us to coarse-grain our solution fields without rescaling. The conversion factor for velocity is chosen such that the characteristic velocity in lattice units stays well away from the lattice speed of sound. Conversion for all other parameters and variables follows from these conversion factors and the choice of Reynolds number.
+
+\subsection{Test setup}
+We evaluate our data-driven SGS model in LES on a coarse grid of size $128 \times 128$. These simulations are compared with a reference DNS on a $2048 \times 2048$ grid.
+
+We first run a DNS burn-in phase to obtain a fully developed isotropic turbulent field. Starting from this field, we run DNS for 125 time units ($2.8 \cdot 10^{6}$ DNS time steps) to generate reference QoI trajectories. We use the initial part of these trajectories to train our SGS models and assess them by their ability to reproduce the statistics of the full trajectories, in particular the long-term QoI distributions.
+
+\subsection{KS-distance}
+To quantify similarity between long-term QoI distributions, we use the Kolmogorov--Smirnov (KS) distance, which compares two distributions through the maximum difference between their cumulative distribution functions $F(x)$ and $G(x)$:
+\begin{equation}
+    KS\Big(F(x),G(x)\Big) = \max_x \Big\lvert F(x)-G(x) \Big\rvert.
+    \label{eq:KS}
+\end{equation}
+The KS-distance is particularly suitable here because it does not require integration over the support of the distributions, which makes it robust when comparing QoIs with different magnitudes or units. We therefore summarize discrepancies across all QoI distributions using the summed KS-distance.
+
+\subsection{Calibrating the Smagorinsky constant}
+We calibrate the Smagorinsky model by running a set of LES with different values for the model constant. Each LES is run for 57 time units, and the resulting QoI distributions are compared with those of the first 57 time units of the reference simulation. This duration matches the largest training window used for the data-driven models in later sections. Figure \ref{fig:optimize-smag-summed-KS} reports the summed KS-distance for the different model constant values. The minimum summed KS-distance, $0.87$, is obtained at $c_{smag}=0.106$. KS-distances for the individual QoIs are reported in \ref{appendix:KS-distances for individual QOIs}.       
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.5\linewidth]{figures/optimize_smag_summed_KS.pdf}
+    \caption{Optimization of the Smagorinsky constant for $Re = 10\,000$ Kolmogorov flow with respect to the summed KS-distance of kernel-based QoIs: [$E_{G_3}, E_{L_3}, E_{L_1}, Z_{G_3}, Z_{L_3}, Z_{L_1}$]. The QoI distributions are compared over $T=57$ time units.}
+    \label{fig:optimize-smag-summed-KS}
+\end{figure}
+
+\subsection{Training the TO method}
+Training the TO method consists of tracking reference QoI trajectories with a low-fidelity simulation. This procedure yields a time series of corrections for each QoI, to which we fit a model.
+
+During tracking, the low-fidelity simulation is evolved with the TO subgrid-scale forcing in \eqref{eq:TO-ansatz}, with coefficients $\tau_i(t^n)$ computed from \eqref{eq:dQ-from-ref} and \eqref{eq:tau-from-dQ-for-tracking}. \ref{app:tracking} shows the QoI trajectories of the resulting LES. Nudging at the post-collision state is highly effective and yields only minor deviations from the reference trajectories. The pre-collision state shows somewhat larger deviations, most notably a systematic overestimation of small-scale energy. Nevertheless, the nudged low-fidelity simulations remain stable, while the same solver without SGS forcing becomes unstable within 10 time units.
+
+Figure \ref{fig:dQ-in-tracking} shows the corrections applied during tracking. Their magnitude is expressed as a fraction of the time-averaged value of the corresponding QoI. In general, the corrections are small. The largest corrections occur for small-scale energy, where their magnitude can reach up to half of its mean value. These corrections predominantly remove energy from the small scales, consistent with the expected turbulence physics. At the start of tracking, the corrections are relatively large but decay rapidly in time. We interpret this transient as a burn-in period caused by the abrupt change in solver resolution. Accordingly, we exclude the first 5000 time steps (3.5 time units) from the training data, as indicated by the vertical dashed line.
+
+
+\section{Results}\label{sec:results}
+This section reports the online performance of TO-LRS as an SGS model. All low-fidelity simulations were run for 125 time units. Because TO-LRS introduces stochastic forcing, each configuration was evaluated in an ensemble with five replica simulations. We first examine hyperparameter effects (history length, training-data volume, and regularization). We then summarize turbulence statistics for the best-performing models.
+
+\subsection{TO-LRS hyperparameters}
+We first examine the effects of history length and training-data volume without regularization. Figure \ref{fig:TO-LRS-online-performance-lambda0} shows performance for three training windows: data up to 57, 28, and 14 time units.
+
+With 57 time units of training data, history lengths between 50 and 600 time steps produce stable simulations. For larger history lengths, some replicas become unstable. The best performance is obtained around $h=500$. All stable history lengths outperform the Smagorinsky baseline in summed KS-distance.
+
+Reducing the training window to 28 time units slightly degrades performance; in particular, ensembles with history lengths above 450 time steps become unstable. With only 14 time units of training data, all tested history lengths are unstable without regularization.
+
+\end{document}

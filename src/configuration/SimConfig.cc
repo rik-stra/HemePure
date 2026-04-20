@@ -118,6 +118,11 @@ namespace hemelb
 			if (monitoringEl != io::xml::Element::Missing())
 				DoIOForMonitoring(monitoringEl);
 
+			// Optional element <kernel_qoi_output>
+			io::xml::Element kernelQoiEl = topNode.GetChildOrNull("kernel_qoi_output");
+			if (kernelQoiEl != io::xml::Element::Missing())
+				DoIOForKernelQoiOutput(kernelQoiEl);
+
 		}
 
 		void SimConfig::DoIOForSimulation(const io::xml::Element simEl)
@@ -1145,6 +1150,61 @@ namespace hemelb
 
 			monitoringConfig.doIncompressibilityCheck = (monEl.GetChildOrNull("incompressibility")
 					!= io::xml::Element::Missing());
+		}
+
+		void SimConfig::DoIOForKernelQoiOutput(const io::xml::Element& qoiEl)
+		{
+			kernelQoiOutputConfig.enabled = true;
+
+			const std::string* enabledAttr = qoiEl.GetAttributeOrNull("enabled");
+			if (enabledAttr != NULL)
+			{
+				kernelQoiOutputConfig.enabled = (*enabledAttr == "true") || (*enabledAttr == "1");
+			}
+
+			const std::string* filenameAttr = qoiEl.GetAttributeOrNull("filename");
+			if (filenameAttr != NULL)
+			{
+				kernelQoiOutputConfig.filename = *filenameAttr;
+			}
+
+			const std::string* frequencyAttr = qoiEl.GetAttributeOrNull("frequency");
+			if (frequencyAttr != NULL)
+			{
+				std::istringstream iss(*frequencyAttr);
+				iss >> kernelQoiOutputConfig.frequency;
+			}
+
+			const std::string* startAttr = qoiEl.GetAttributeOrNull("start");
+			if (startAttr != NULL)
+			{
+				std::istringstream iss(*startAttr);
+				iss >> kernelQoiOutputConfig.start;
+			}
+
+			const std::string* stopAttr = qoiEl.GetAttributeOrNull("stop");
+			if (stopAttr != NULL)
+			{
+				std::istringstream iss(*stopAttr);
+				iss >> kernelQoiOutputConfig.stop;
+			}
+
+			const std::string* coarseningAttr = qoiEl.GetAttributeOrNull("coarsening_factor");
+			if (coarseningAttr != NULL)
+			{
+				std::istringstream iss(*coarseningAttr);
+				iss >> kernelQoiOutputConfig.coarseningFactor;
+			}
+
+			if (kernelQoiOutputConfig.frequency == 0)
+			{
+				throw Exception() << "kernel_qoi_output frequency must be > 0";
+			}
+
+			if (kernelQoiOutputConfig.coarseningFactor < 1)
+			{
+				throw Exception() << "kernel_qoi_output coarsening_factor must be >= 1";
+			}
 		}
 
 		void SimConfig::DoIOForSteadyFlowConvergence(const io::xml::Element& convEl)
