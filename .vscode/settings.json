@@ -1,3 +1,5 @@
 {
-    "cmake.sourceDirectory": "/export/scratch2/rik/HemePure/src"
+    "cmake.sourceDirectory": "/export/scratch2/rik/HemePure/src",
+    "python-envs.defaultEnvManager": "ms-python.python:conda",
+    "python-envs.defaultPackageManager": "ms-python.python:conda"
 }

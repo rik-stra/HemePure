@@ -19,6 +19,8 @@ The preprocessing script runs a two-pass voxelization workflow and then builds t
 
 ```bash
 python3 hemeLBpreprocSingle.py STLFNAME STLUNITS INLETPOSITIONS_FILE NUMINLETS NUMOUTLETS DXreq NUMRANKS RANKSPERNODE tauDesired
+
+python3 /export/scratch2/rik/HemePure_tools/hemeLBpreprocSingle.py SixBranch.stl 0.01 inlets.txt 1 5 0.01 16 16 0.6
 ```
 
 The script requires exactly 9 user arguments.
