@@ -146,18 +146,24 @@ namespace hemelb
         {
           // No coarse-graining: sample directly at fine lattice point.
           site_t idx;
-          if (!TryGetLocalIndex(fineX, fineY, fineZ, idx))
+          if (TryGetLocalIndex(fineX, fineY, fineZ, idx))
           {
-            const site_t globalId = latticeData.GetGlobalNoncontiguousSiteIdFromGlobalCoords(
-              util::Vector3D<site_t>(static_cast<site_t>(fineX), static_cast<site_t>(fineY), static_cast<site_t>(fineZ)));
-            std::unordered_map<site_t, util::Vector3D<distribn_t> >::const_iterator halo = haloVelocityCache.find(globalId);
-            if (halo == haloVelocityCache.end())
-            {
-              return ZeroVector();
-            }
-            return halo->second;
+            return propertyCache.postCollisionVelocityCache.Get(idx);
           }
-          return propertyCache.velocityCache.Get(idx);
+
+          if (!IsInBounds(fineX, fineY, fineZ))
+          {
+            return ZeroVector();
+          }
+
+          const site_t globalId = latticeData.GetGlobalNoncontiguousSiteIdFromGlobalCoords(
+              util::Vector3D<site_t>(static_cast<site_t>(fineX), static_cast<site_t>(fineY), static_cast<site_t>(fineZ)));
+          std::unordered_map<site_t, util::Vector3D<distribn_t> >::const_iterator halo = haloVelocityCache.find(globalId);
+          if (halo == haloVelocityCache.end())
+          {
+            return ZeroVector();
+          }
+          return halo->second;
         }
 
         // Coarse-graining: subsample one representative point from the m×m×m block
@@ -173,19 +179,24 @@ namespace hemelb
 
         // Subsample the block by taking the velocity at the block corner.
         site_t idx;
-        if (!TryGetLocalIndex(blockStartX, blockStartY, blockStartZ, idx))
+        if (TryGetLocalIndex(blockStartX, blockStartY, blockStartZ, idx))
         {
-          const site_t globalId = latticeData.GetGlobalNoncontiguousSiteIdFromGlobalCoords(
-            util::Vector3D<site_t>(static_cast<site_t>(blockStartX), static_cast<site_t>(blockStartY), static_cast<site_t>(blockStartZ)));
-          std::unordered_map<site_t, util::Vector3D<distribn_t> >::const_iterator halo = haloVelocityCache.find(globalId);
-          if (halo == haloVelocityCache.end())
-          {
-            return ZeroVector();
-          }
-          return halo->second;
+          return propertyCache.postCollisionVelocityCache.Get(idx);
         }
 
-        return propertyCache.velocityCache.Get(idx);
+        if (!IsInBounds(blockStartX, blockStartY, blockStartZ))
+        {
+          return ZeroVector();
+        }
+
+        const site_t globalId = latticeData.GetGlobalNoncontiguousSiteIdFromGlobalCoords(
+            util::Vector3D<site_t>(static_cast<site_t>(blockStartX), static_cast<site_t>(blockStartY), static_cast<site_t>(blockStartZ)));
+        std::unordered_map<site_t, util::Vector3D<distribn_t> >::const_iterator halo = haloVelocityCache.find(globalId);
+        if (halo == haloVelocityCache.end())
+        {
+          return ZeroVector();
+        }
+        return halo->second;
       }
 
       void KernelScaleAwareQoiCalculator::ComputeLocalIntegrals(const MacroscopicPropertyCache& propertyCache,
@@ -242,6 +253,14 @@ namespace hemelb
 
             std::vector<util::Vector3D<distribn_t> > tempX(siteCount, ZeroVector());
             std::vector<util::Vector3D<distribn_t> > tempY(siteCount, ZeroVector());
+            std::unordered_map<site_t, util::Vector3D<distribn_t> > remoteTempX;
+            std::unordered_map<site_t, util::Vector3D<distribn_t> > remoteTempY;
+
+            const auto getGlobalId = [&](int x, int y, int z) -> site_t
+            {
+              return latticeData.GetGlobalNoncontiguousSiteIdFromGlobalCoords(
+                  util::Vector3D<site_t>(static_cast<site_t>(x), static_cast<site_t>(y), static_cast<site_t>(z)));
+            };
 
             for (std::size_t siteIndex = 0; siteIndex < coarseSiteIndices.size(); ++siteIndex)
             {
@@ -260,6 +279,69 @@ namespace hemelb
               tempX[i] = sum;
             }
 
+            const auto getTempXAt = [&](int x, int y, int z) -> util::Vector3D<distribn_t>
+            {
+              if (!IsInBounds(x, y, z))
+              {
+                return ZeroVector();
+              }
+
+              site_t idx;
+              if (TryGetLocalIndex(x, y, z, idx))
+              {
+                return tempX[idx];
+              }
+
+              const site_t gid = getGlobalId(x, y, z);
+              std::unordered_map<site_t, util::Vector3D<distribn_t> >::const_iterator found = remoteTempX.find(gid);
+              if (found != remoteTempX.end())
+              {
+                return found->second;
+              }
+
+              util::Vector3D<distribn_t> sum(0.0, 0.0, 0.0);
+              for (int dx = -radius; dx <= radius; ++dx)
+              {
+                sum = AddScaled(sum, GetCoarseVelocity(propertyCache,
+                                                       haloVelocityCache,
+                                                       x + dx * coarseStep,
+                                                       y,
+                                                       z),
+                                w[dx + radius]);
+              }
+              remoteTempX[gid] = sum;
+              return sum;
+            };
+
+            const auto getTempYAt = [&](int x, int y, int z) -> util::Vector3D<distribn_t>
+            {
+              if (!IsInBounds(x, y, z))
+              {
+                return ZeroVector();
+              }
+
+              site_t idx;
+              if (TryGetLocalIndex(x, y, z, idx))
+              {
+                return tempY[idx];
+              }
+
+              const site_t gid = getGlobalId(x, y, z);
+              std::unordered_map<site_t, util::Vector3D<distribn_t> >::const_iterator found = remoteTempY.find(gid);
+              if (found != remoteTempY.end())
+              {
+                return found->second;
+              }
+
+              util::Vector3D<distribn_t> sum(0.0, 0.0, 0.0);
+              for (int dy = -radius; dy <= radius; ++dy)
+              {
+                sum = AddScaled(sum, getTempXAt(x, y + dy * coarseStep, z), w[dy + radius]);
+              }
+              remoteTempY[gid] = sum;
+              return sum;
+            };
+
             for (std::size_t siteIndex = 0; siteIndex < coarseSiteIndices.size(); ++siteIndex)
             {
               const site_t i = coarseSiteIndices[siteIndex];
@@ -267,12 +349,11 @@ namespace hemelb
               util::Vector3D<distribn_t> sum(0.0, 0.0, 0.0);
               for (int dy = -radius; dy <= radius; ++dy)
               {
-                site_t idx;
-                if (!TryGetLocalIndex(static_cast<int>(c.x), static_cast<int>(c.y) + dy * coarseStep, static_cast<int>(c.z), idx))
-                {
-                  continue;
-                }
-                sum = AddScaled(sum, tempX[idx], w[dy + radius]);
+                sum = AddScaled(sum,
+                                getTempXAt(static_cast<int>(c.x),
+                                           static_cast<int>(c.y) + dy * coarseStep,
+                                           static_cast<int>(c.z)),
+                                w[dy + radius]);
               }
               tempY[i] = sum;
             }
@@ -284,12 +365,11 @@ namespace hemelb
               util::Vector3D<distribn_t> sum(0.0, 0.0, 0.0);
               for (int dz = -radius; dz <= radius; ++dz)
               {
-                site_t idx;
-                if (!TryGetLocalIndex(static_cast<int>(c.x), static_cast<int>(c.y), static_cast<int>(c.z) + dz * coarseStep, idx))
-                {
-                  continue;
-                }
-                sum = AddScaled(sum, tempY[idx], w[dz + radius]);
+                sum = AddScaled(sum,
+                                getTempYAt(static_cast<int>(c.x),
+                                           static_cast<int>(c.y),
+                                           static_cast<int>(c.z) + dz * coarseStep),
+                                w[dz + radius]);
               }
               filtered[k * siteCount + i] = sum;
             }
@@ -322,6 +402,7 @@ namespace hemelb
 
         const double invTwo = 0.5;
         const double invTwoCoarseStep = invTwo / static_cast<double>(coarseningFactor);
+        std::vector<std::unordered_map<site_t, util::Vector3D<distribn_t> > > remoteFiltered(kernelCount);
 
         for (std::size_t siteIndex = 0; siteIndex < coarseSiteIndices.size(); ++siteIndex)
         {
@@ -335,15 +416,63 @@ namespace hemelb
 
             const auto sampleFiltered = [&](int ox, int oy, int oz) -> util::Vector3D<distribn_t>
             {
-              site_t idx;
-              if (!TryGetLocalIndex(static_cast<int>(center.x) + ox * coarseStep,
-                                    static_cast<int>(center.y) + oy * coarseStep,
-                                    static_cast<int>(center.z) + oz * coarseStep,
-                                    idx))
+              const int sx = static_cast<int>(center.x) + ox * coarseStep;
+              const int sy = static_cast<int>(center.y) + oy * coarseStep;
+              const int sz = static_cast<int>(center.z) + oz * coarseStep;
+
+              if (!IsInBounds(sx, sy, sz))
               {
                 return ZeroVector();
               }
-              return filtered[k * siteCount + idx];
+
+              site_t idx;
+              if (TryGetLocalIndex(sx, sy, sz, idx))
+              {
+                return filtered[k * siteCount + idx];
+              }
+
+              const site_t gid = latticeData.GetGlobalNoncontiguousSiteIdFromGlobalCoords(
+                  util::Vector3D<site_t>(static_cast<site_t>(sx), static_cast<site_t>(sy), static_cast<site_t>(sz)));
+              std::unordered_map<site_t, util::Vector3D<distribn_t> >::const_iterator cached = remoteFiltered[k].find(gid);
+              if (cached != remoteFiltered[k].end())
+              {
+                return cached->second;
+              }
+
+              util::Vector3D<distribn_t> sum(0.0, 0.0, 0.0);
+              if (kernels[k].type == GaussianKernel)
+              {
+                for (std::size_t t = 0; t < kernels[k].taps.size(); ++t)
+                {
+                  const KernelTap& tap = kernels[k].taps[t];
+                  const util::Vector3D<distribn_t>& velocity = GetCoarseVelocity(propertyCache,
+                                                                                   haloVelocityCache,
+                                                                                   sx + tap.dx * coarseStep,
+                                                                                   sy + tap.dy * coarseStep,
+                                                                                   sz + tap.dz * coarseStep);
+                  sum.x += tap.weight * velocity.x;
+                  sum.y += tap.weight * velocity.y;
+                  sum.z += tap.weight * velocity.z;
+                }
+              }
+              else
+              {
+                for (std::size_t t = 0; t < kernels[k].taps.size(); ++t)
+                {
+                  const KernelTap& tap = kernels[k].taps[t];
+                  const util::Vector3D<distribn_t>& velocity = GetCoarseVelocity(propertyCache,
+                                                                                   haloVelocityCache,
+                                                                                   sx + tap.dx * coarseStep,
+                                                                                   sy + tap.dy * coarseStep,
+                                                                                   sz + tap.dz * coarseStep);
+                  sum.x += tap.weight * velocity.x;
+                  sum.y += tap.weight * velocity.y;
+                  sum.z += tap.weight * velocity.z;
+                }
+              }
+
+              remoteFiltered[k][gid] = sum;
+              return sum;
             };
 
             const util::Vector3D<distribn_t> xp = sampleFiltered(1, 0, 0);

@@ -54,6 +54,12 @@ namespace hemelb
         util::RefreshableCache<util::Vector3D<distribn_t> > velocityCache;
 
         /**
+         * The cache of post-collision velocities for each fluid site on this core.
+         * This is used by QoI extraction when post-collision fields are required.
+         */
+        util::RefreshableCache<util::Vector3D<distribn_t> > postCollisionVelocityCache;
+
+        /**
          * The cache of wall shear stress magnitudes for each fluid site on this core.
          */
         util::RefreshableCache<distribn_t> wallShearStressMagnitudeCache;

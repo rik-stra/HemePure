@@ -68,12 +68,13 @@ To avoid the inter-rank bias that occurs when stencil points cross MPI subdomain
 \subsubsection{Quantity of interest evaluation}
 For each kernel $K$, we compute filtered velocity $\boldsymbol{v}_K = K*\bar{\boldsymbol{u}}$ and evaluate
 \begin{equation}
-    E_K = \frac{1}{2}\sum_{\boldsymbol{x}\in\Omega_f}\|\boldsymbol{v}_K(\boldsymbol{x})\|^2,
+    E_K = \frac{1}{2}\sum_{\boldsymbol{x}\in\Omega_c}\|\boldsymbol{v}_K(\boldsymbol{x})\|^2,
 \end{equation}
 and
 \begin{equation}
-    Z_K = \frac{1}{2}\sum_{\boldsymbol{x}\in\Omega_f}\|\nabla\times\boldsymbol{v}_K(\boldsymbol{x})\|^2.
+    Z_K = \frac{1}{2}\sum_{\boldsymbol{x}\in\Omega_c}\|\nabla\times\boldsymbol{v}_K(\boldsymbol{x})\|^2.
 \end{equation}
+where $\Omega_c$ denotes the set of coarse-grid sample points (sites with coordinates that are integer multiples of $m$ in each direction).
 The curl is discretized by centered differences on the coarse lattice, so the finite-difference denominator uses the effective spacing $\Delta x_{\mathrm{eff}}$,
 \begin{align}
     \partial_x f(\boldsymbol{x}) &\approx \frac{f(\boldsymbol{x}+\boldsymbol{e}_x)-f(\boldsymbol{x}-\boldsymbol{e}_x)}{2\,\Delta x_{\mathrm{eff}}},\\

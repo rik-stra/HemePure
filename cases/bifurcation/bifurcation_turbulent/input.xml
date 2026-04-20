@@ -2,7 +2,7 @@
 <hemelbsettings version="3">
   <simulation>
     <step_length units="s" value="2e-6"/>
-    <steps units="lattice" value="1000"/>
+    <steps units="lattice" value="400"/>
     <stresstype value="1"/>
     <voxel_size units="m" value="5e-5"/>
     <origin units="m" value="(0.0,0.0,0.0)"/>

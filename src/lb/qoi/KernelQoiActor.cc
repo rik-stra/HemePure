@@ -66,7 +66,7 @@ namespace hemelb
       {
         if (ShouldWrite(simulationState.GetTimeStep()))
         {
-          propertyCache.velocityCache.SetRefreshFlag();
+          propertyCache.postCollisionVelocityCache.SetRefreshFlag();
         }
       }
 
@@ -164,7 +164,7 @@ namespace hemelb
         for (std::size_t j = 0; j < coarseLocalSiteIndices.size(); ++j)
         {
           const site_t i = coarseLocalSiteIndices[j];
-          const util::Vector3D<distribn_t>& velocity = propertyCache.velocityCache.Get(i);
+          const util::Vector3D<distribn_t>& velocity = propertyCache.postCollisionVelocityCache.Get(i);
           localVelocities[3 * j + 0] = velocity.x;
           localVelocities[3 * j + 1] = velocity.y;
           localVelocities[3 * j + 2] = velocity.z;

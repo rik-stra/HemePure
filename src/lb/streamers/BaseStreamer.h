@@ -100,6 +100,28 @@ namespace hemelb
 									propertyCache.velocityCache.Put(site.GetIndex(), hydroVars.velocity);
 								}
 
+								if (propertyCache.postCollisionVelocityCache.RequiresRefresh())
+								{
+									distribn_t postDensity;
+									distribn_t postMomentumX;
+									distribn_t postMomentumY;
+									distribn_t postMomentumZ;
+									util::Vector3D<distribn_t> postVelocity;
+									distribn_t postFeq[LatticeType::NUMVECTORS];
+
+									LatticeType::CalculateDensityMomentumFEq(hydroVars.GetFPostCollision().f,
+											postDensity,
+											postMomentumX,
+											postMomentumY,
+											postMomentumZ,
+											postVelocity.x,
+											postVelocity.y,
+											postVelocity.z,
+											postFeq);
+
+									propertyCache.postCollisionVelocityCache.Put(site.GetIndex(), postVelocity);
+								}
+
 								if (propertyCache.wallShearStressMagnitudeCache.RequiresRefresh())
 								{
 									distribn_t stress;
