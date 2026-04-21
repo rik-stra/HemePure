@@ -32,6 +32,14 @@ namespace hemelb
                                                                    int coarseningFactor) :
         localGlobalCoords(latticeData.GetLocalFluidSiteCount()),
         globalToLocal(),
+        coarseSiteIndices(),
+        enstrophyNeighborRefs(),
+        filteredWorkspace(),
+        tempXWorkspace(),
+        tempYWorkspace(),
+        remoteTempXCache(),
+        remoteTempYCache(),
+        remoteFilteredCache(),
         latticeData(latticeData),
         coarseningFactor(coarseningFactor)
       {
@@ -44,6 +52,9 @@ namespace hemelb
           const site_t globalId = latticeData.GetGlobalNoncontiguousSiteIdFromGlobalCoords(coord);
           globalToLocal[globalId] = i;
         }
+
+        BuildCoarseSiteIndices();
+        BuildEnstrophyNeighborRefs();
       }
 
       std::vector<KernelDefinition> KernelScaleAwareQoiCalculator::CreateDefaultKernels() const
@@ -138,6 +149,75 @@ namespace hemelb
         return true;
       }
 
+      void KernelScaleAwareQoiCalculator::BuildCoarseSiteIndices()
+      {
+        const site_t siteCount = latticeData.GetLocalFluidSiteCount();
+        coarseSiteIndices.clear();
+        coarseSiteIndices.reserve(siteCount);
+
+        for (site_t i = 0; i < siteCount; ++i)
+        {
+          const util::Vector3D<site_t>& c = localGlobalCoords[i];
+          if (coarseningFactor == 1 ||
+              (c.x % coarseningFactor == 0 && c.y % coarseningFactor == 0 && c.z % coarseningFactor == 0))
+          {
+            coarseSiteIndices.push_back(i);
+          }
+        }
+      }
+
+      KernelScaleAwareQoiCalculator::SamplePointRef
+      KernelScaleAwareQoiCalculator::MakeSamplePointRef(int x, int y, int z) const
+      {
+        SamplePointRef ref;
+        ref.x = x;
+        ref.y = y;
+        ref.z = z;
+        ref.inBounds = IsInBounds(x, y, z);
+        ref.isLocal = false;
+        ref.localIndex = 0;
+        ref.globalId = 0;
+
+        if (!ref.inBounds)
+        {
+          return ref;
+        }
+
+        site_t localIndex;
+        if (TryGetLocalIndex(x, y, z, localIndex))
+        {
+          ref.isLocal = true;
+          ref.localIndex = localIndex;
+          return ref;
+        }
+
+        ref.globalId = latticeData.GetGlobalNoncontiguousSiteIdFromGlobalCoords(
+            util::Vector3D<site_t>(static_cast<site_t>(x), static_cast<site_t>(y), static_cast<site_t>(z)));
+        return ref;
+      }
+
+      void KernelScaleAwareQoiCalculator::BuildEnstrophyNeighborRefs()
+      {
+        const int coarseStep = coarseningFactor;
+        enstrophyNeighborRefs.resize(coarseSiteIndices.size());
+
+        for (std::size_t siteIndex = 0; siteIndex < coarseSiteIndices.size(); ++siteIndex)
+        {
+          const site_t i = coarseSiteIndices[siteIndex];
+          const util::Vector3D<site_t>& center = localGlobalCoords[i];
+          const int cx = static_cast<int>(center.x);
+          const int cy = static_cast<int>(center.y);
+          const int cz = static_cast<int>(center.z);
+
+          enstrophyNeighborRefs[siteIndex][0] = MakeSamplePointRef(cx + coarseStep, cy, cz);
+          enstrophyNeighborRefs[siteIndex][1] = MakeSamplePointRef(cx - coarseStep, cy, cz);
+          enstrophyNeighborRefs[siteIndex][2] = MakeSamplePointRef(cx, cy + coarseStep, cz);
+          enstrophyNeighborRefs[siteIndex][3] = MakeSamplePointRef(cx, cy - coarseStep, cz);
+          enstrophyNeighborRefs[siteIndex][4] = MakeSamplePointRef(cx, cy, cz + coarseStep);
+          enstrophyNeighborRefs[siteIndex][5] = MakeSamplePointRef(cx, cy, cz - coarseStep);
+        }
+      }
+
       util::Vector3D<distribn_t> KernelScaleAwareQoiCalculator::GetCoarseVelocity(const MacroscopicPropertyCache& propertyCache,
                                                                                    const std::unordered_map<site_t, util::Vector3D<distribn_t> >& haloVelocityCache,
                                                                                    int fineX, int fineY, int fineZ) const
@@ -216,18 +296,26 @@ namespace hemelb
           return;
         }
 
-        std::vector<util::Vector3D<distribn_t> > filtered(kernelCount * siteCount, ZeroVector());
-        std::vector<site_t> coarseSiteIndices;
-        coarseSiteIndices.reserve(siteCount);
-
-        for (site_t i = 0; i < siteCount; ++i)
+        if (coarseSiteIndices.empty())
         {
-          const util::Vector3D<site_t>& c = localGlobalCoords[i];
-          if (coarseningFactor == 1 ||
-              (c.x % coarseningFactor == 0 && c.y % coarseningFactor == 0 && c.z % coarseningFactor == 0))
-          {
-            coarseSiteIndices.push_back(i);
-          }
+          return;
+        }
+
+        if (filteredWorkspace.size() != kernelCount * siteCount)
+        {
+          filteredWorkspace.resize(kernelCount * siteCount, ZeroVector());
+        }
+        if (tempXWorkspace.size() != siteCount)
+        {
+          tempXWorkspace.resize(siteCount, ZeroVector());
+        }
+        if (tempYWorkspace.size() != siteCount)
+        {
+          tempYWorkspace.resize(siteCount, ZeroVector());
+        }
+        if (remoteFilteredCache.size() != kernelCount)
+        {
+          remoteFilteredCache.resize(kernelCount);
         }
 
         const int coarseStep = coarseningFactor;
@@ -251,16 +339,10 @@ namespace hemelb
               w[i] /= norm;
             }
 
-            std::vector<util::Vector3D<distribn_t> > tempX(siteCount, ZeroVector());
-            std::vector<util::Vector3D<distribn_t> > tempY(siteCount, ZeroVector());
-            std::unordered_map<site_t, util::Vector3D<distribn_t> > remoteTempX;
-            std::unordered_map<site_t, util::Vector3D<distribn_t> > remoteTempY;
-
-            const auto getGlobalId = [&](int x, int y, int z) -> site_t
-            {
-              return latticeData.GetGlobalNoncontiguousSiteIdFromGlobalCoords(
-                  util::Vector3D<site_t>(static_cast<site_t>(x), static_cast<site_t>(y), static_cast<site_t>(z)));
-            };
+            remoteTempXCache.clear();
+            remoteTempYCache.clear();
+            remoteTempXCache.reserve(coarseSiteIndices.size());
+            remoteTempYCache.reserve(coarseSiteIndices.size());
 
             for (std::size_t siteIndex = 0; siteIndex < coarseSiteIndices.size(); ++siteIndex)
             {
@@ -276,25 +358,24 @@ namespace hemelb
                                                        static_cast<int>(c.z)),
                                 w[dx + radius]);
               }
-              tempX[i] = sum;
+              tempXWorkspace[i] = sum;
             }
 
             const auto getTempXAt = [&](int x, int y, int z) -> util::Vector3D<distribn_t>
             {
-              if (!IsInBounds(x, y, z))
+              const SamplePointRef ref = MakeSamplePointRef(x, y, z);
+              if (!ref.inBounds)
               {
                 return ZeroVector();
               }
 
-              site_t idx;
-              if (TryGetLocalIndex(x, y, z, idx))
+              if (ref.isLocal)
               {
-                return tempX[idx];
+                return tempXWorkspace[ref.localIndex];
               }
 
-              const site_t gid = getGlobalId(x, y, z);
-              std::unordered_map<site_t, util::Vector3D<distribn_t> >::const_iterator found = remoteTempX.find(gid);
-              if (found != remoteTempX.end())
+              std::unordered_map<site_t, util::Vector3D<distribn_t> >::const_iterator found = remoteTempXCache.find(ref.globalId);
+              if (found != remoteTempXCache.end())
               {
                 return found->second;
               }
@@ -309,26 +390,25 @@ namespace hemelb
                                                        z),
                                 w[dx + radius]);
               }
-              remoteTempX[gid] = sum;
+              remoteTempXCache[ref.globalId] = sum;
               return sum;
             };
 
             const auto getTempYAt = [&](int x, int y, int z) -> util::Vector3D<distribn_t>
             {
-              if (!IsInBounds(x, y, z))
+              const SamplePointRef ref = MakeSamplePointRef(x, y, z);
+              if (!ref.inBounds)
               {
                 return ZeroVector();
               }
 
-              site_t idx;
-              if (TryGetLocalIndex(x, y, z, idx))
+              if (ref.isLocal)
               {
-                return tempY[idx];
+                return tempYWorkspace[ref.localIndex];
               }
 
-              const site_t gid = getGlobalId(x, y, z);
-              std::unordered_map<site_t, util::Vector3D<distribn_t> >::const_iterator found = remoteTempY.find(gid);
-              if (found != remoteTempY.end())
+              std::unordered_map<site_t, util::Vector3D<distribn_t> >::const_iterator found = remoteTempYCache.find(ref.globalId);
+              if (found != remoteTempYCache.end())
               {
                 return found->second;
               }
@@ -338,7 +418,7 @@ namespace hemelb
               {
                 sum = AddScaled(sum, getTempXAt(x, y + dy * coarseStep, z), w[dy + radius]);
               }
-              remoteTempY[gid] = sum;
+              remoteTempYCache[ref.globalId] = sum;
               return sum;
             };
 
@@ -355,7 +435,7 @@ namespace hemelb
                                            static_cast<int>(c.z)),
                                 w[dy + radius]);
               }
-              tempY[i] = sum;
+              tempYWorkspace[i] = sum;
             }
 
             for (std::size_t siteIndex = 0; siteIndex < coarseSiteIndices.size(); ++siteIndex)
@@ -371,7 +451,7 @@ namespace hemelb
                                            static_cast<int>(c.z) + dz * coarseStep),
                                 w[dz + radius]);
               }
-              filtered[k * siteCount + i] = sum;
+              filteredWorkspace[k * siteCount + i] = sum;
             }
           }
           else
@@ -395,51 +475,51 @@ namespace hemelb
                 sum.z += tap.weight * velocity.z;
               }
 
-              filtered[k * siteCount + i] = sum;
+              filteredWorkspace[k * siteCount + i] = sum;
             }
           }
         }
 
         const double invTwo = 0.5;
         const double invTwoCoarseStep = invTwo / static_cast<double>(coarseningFactor);
-        std::vector<std::unordered_map<site_t, util::Vector3D<distribn_t> > > remoteFiltered(kernelCount);
 
         for (std::size_t siteIndex = 0; siteIndex < coarseSiteIndices.size(); ++siteIndex)
         {
           const site_t i = coarseSiteIndices[siteIndex];
-          const util::Vector3D<site_t>& center = localGlobalCoords[i];
 
           for (std::size_t k = 0; k < kernelCount; ++k)
           {
-            const util::Vector3D<distribn_t>& vf = filtered[k * siteCount + i];
+            if (siteIndex == 0)
+            {
+              remoteFilteredCache[k].clear();
+              remoteFilteredCache[k].reserve(coarseSiteIndices.size());
+            }
+
+            const util::Vector3D<distribn_t>& vf = filteredWorkspace[k * siteCount + i];
             localEnergy[k] += invTwo * (vf.x * vf.x + vf.y * vf.y + vf.z * vf.z);
 
-            const auto sampleFiltered = [&](int ox, int oy, int oz) -> util::Vector3D<distribn_t>
+            const auto sampleFiltered = [&](const SamplePointRef& ref) -> util::Vector3D<distribn_t>
             {
-              const int sx = static_cast<int>(center.x) + ox * coarseStep;
-              const int sy = static_cast<int>(center.y) + oy * coarseStep;
-              const int sz = static_cast<int>(center.z) + oz * coarseStep;
-
-              if (!IsInBounds(sx, sy, sz))
+              if (!ref.inBounds)
               {
                 return ZeroVector();
               }
 
-              site_t idx;
-              if (TryGetLocalIndex(sx, sy, sz, idx))
+              if (ref.isLocal)
               {
-                return filtered[k * siteCount + idx];
+                return filteredWorkspace[k * siteCount + ref.localIndex];
               }
 
-              const site_t gid = latticeData.GetGlobalNoncontiguousSiteIdFromGlobalCoords(
-                  util::Vector3D<site_t>(static_cast<site_t>(sx), static_cast<site_t>(sy), static_cast<site_t>(sz)));
-              std::unordered_map<site_t, util::Vector3D<distribn_t> >::const_iterator cached = remoteFiltered[k].find(gid);
-              if (cached != remoteFiltered[k].end())
+              std::unordered_map<site_t, util::Vector3D<distribn_t> >::const_iterator cached = remoteFilteredCache[k].find(ref.globalId);
+              if (cached != remoteFilteredCache[k].end())
               {
                 return cached->second;
               }
 
               util::Vector3D<distribn_t> sum(0.0, 0.0, 0.0);
+              const int sx = ref.x;
+              const int sy = ref.y;
+              const int sz = ref.z;
               if (kernels[k].type == GaussianKernel)
               {
                 for (std::size_t t = 0; t < kernels[k].taps.size(); ++t)
@@ -471,16 +551,17 @@ namespace hemelb
                 }
               }
 
-              remoteFiltered[k][gid] = sum;
+              remoteFilteredCache[k][ref.globalId] = sum;
               return sum;
             };
 
-            const util::Vector3D<distribn_t> xp = sampleFiltered(1, 0, 0);
-            const util::Vector3D<distribn_t> xm = sampleFiltered(-1, 0, 0);
-            const util::Vector3D<distribn_t> yp = sampleFiltered(0, 1, 0);
-            const util::Vector3D<distribn_t> ym = sampleFiltered(0, -1, 0);
-            const util::Vector3D<distribn_t> zp = sampleFiltered(0, 0, 1);
-            const util::Vector3D<distribn_t> zm = sampleFiltered(0, 0, -1);
+            const std::array<SamplePointRef, 6>& refs = enstrophyNeighborRefs[siteIndex];
+            const util::Vector3D<distribn_t> xp = sampleFiltered(refs[0]);
+            const util::Vector3D<distribn_t> xm = sampleFiltered(refs[1]);
+            const util::Vector3D<distribn_t> yp = sampleFiltered(refs[2]);
+            const util::Vector3D<distribn_t> ym = sampleFiltered(refs[3]);
+            const util::Vector3D<distribn_t> zp = sampleFiltered(refs[4]);
+            const util::Vector3D<distribn_t> zm = sampleFiltered(refs[5]);
 
             const double dVxDy = invTwoCoarseStep * (yp.x - ym.x);
             const double dVxDz = invTwoCoarseStep * (zp.x - zm.x);

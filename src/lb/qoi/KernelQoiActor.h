@@ -36,6 +36,7 @@ namespace hemelb
                          reporting::Timers& timers,
                          const configuration::SimConfig::KernelQoiOutputConfig& config,
                          const std::string& outputPath);
+          ~KernelQoiActor();
 
           void SetRequiredProperties();
           void EndIteration();
@@ -69,6 +70,7 @@ namespace hemelb
             std::vector<site_t> gatheredIds;
           mutable std::vector<distribn_t> localVelocities;
             mutable std::vector<distribn_t> gatheredVelocities;
+            unsigned long writesSinceLastFlush;
       };
     }
   }

@@ -1196,6 +1196,19 @@ namespace hemelb
 				iss >> kernelQoiOutputConfig.coarseningFactor;
 			}
 
+			const std::string* flushIntervalAttr = qoiEl.GetAttributeOrNull("flush_interval");
+			if (flushIntervalAttr != NULL)
+			{
+				std::istringstream iss(*flushIntervalAttr);
+				iss >> kernelQoiOutputConfig.flushInterval;
+			}
+
+			const std::string* flushOnFinalizeAttr = qoiEl.GetAttributeOrNull("flush_on_finalize");
+			if (flushOnFinalizeAttr != NULL)
+			{
+				kernelQoiOutputConfig.flushOnFinalize = (*flushOnFinalizeAttr == "true") || (*flushOnFinalizeAttr == "1");
+			}
+
 			if (kernelQoiOutputConfig.frequency == 0)
 			{
 				throw Exception() << "kernel_qoi_output frequency must be > 0";

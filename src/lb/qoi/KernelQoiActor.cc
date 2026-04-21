@@ -37,7 +37,8 @@ namespace hemelb
         outputPath(outputPath),
         calculator(latticeData, config.coarseningFactor),
         kernels(calculator.CreateDefaultKernels()),
-        totalGatheredCount(0)
+        totalGatheredCount(0),
+        writesSinceLastFlush(0)
       {
         InitializeOutputFile();
         CacheCoarseLocalSiteIndices();
@@ -48,6 +49,14 @@ namespace hemelb
           log::Logger::Log<log::Warning, log::Singleton>(
               "Kernel QoI output exchanges only the downsampled velocity field across ranks before stencil evaluation."
               " Only out-of-domain samples are zero-padded.");
+        }
+      }
+
+      KernelQoiActor::~KernelQoiActor()
+      {
+        if (config.flushOnFinalize && ioComms.OnIORank() && outputStream.is_open())
+        {
+          outputStream.flush();
         }
       }
 
@@ -238,7 +247,13 @@ namespace hemelb
             outputStream << "," << globalPacked[i];
           }
           outputStream << "\n";
-          outputStream.flush();
+
+          ++writesSinceLastFlush;
+          if (config.flushInterval > 0 && writesSinceLastFlush >= config.flushInterval)
+          {
+            outputStream.flush();
+            writesSinceLastFlush = 0;
+          }
         }
 
         timers[reporting::Timers::extractionWriting].Stop();

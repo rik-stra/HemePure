@@ -84,7 +84,8 @@ namespace hemelb
           struct KernelQoiOutputConfig
           {
             KernelQoiOutputConfig() :
-              enabled(false), frequency(1), start(0), stop(1000000000), filename("kernel_qoi.csv"), coarseningFactor(1)
+              enabled(false), frequency(1), start(0), stop(1000000000), filename("kernel_qoi.csv"),
+              coarseningFactor(1), flushInterval(100), flushOnFinalize(true)
             {
             }
 
@@ -94,6 +95,8 @@ namespace hemelb
             unsigned long stop;
             std::string filename;
             int coarseningFactor;  ///< Coarse-graining factor (1 = no coarsening)
+            unsigned long flushInterval;  ///< Flush every N QoI writes (0 disables periodic flushing)
+            bool flushOnFinalize;         ///< Flush and close the stream when the actor is destroyed
           };
 
         static SimConfig* New(const std::string& path);

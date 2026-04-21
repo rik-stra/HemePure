@@ -1,0 +1,19 @@
+<?xml version="1.0" ?>
+<!-- the referenceDirection is used for the resolution -->
+<!-- see src/offLattice/triangularSurfaceMesh.hh -->
+<!-- 0 means x-direction, 1 means y-direction and 2 means z-direction -->
+<referenceDirection> 0 </referenceDirection>
+<resolution> 0.005 </resolution>
+<DX> 5e-05 </DX>
+<!-- *.stl containing geometry -->
+<stl> UnevenArms.stl </stl>
+<!-- analysis points for identification of iolets -->
+<!-- first <num_Ilets> points identify inlets -->
+<!-- last <num_Olets> points identify outlets -->
+<analysisPoints> <!-- lattice units -->
+<numIlets> 1 </numIlets>
+<numOlets> 2 </numOlets>
+<point id="1"> 597.221 43.0162 3.0 </point>
+<point id="2"> 31.2957 43.0162 969.095 </point>
+<point id="3"> 738.702 43.0162 544.651 </point>
+</analysisPoints>
