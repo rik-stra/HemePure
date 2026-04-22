@@ -61,9 +61,9 @@ For the Laplacian kernel, we use a sparse 3D stencil with spacing $s$,
     (L_s * \boldsymbol{v})(\boldsymbol{x}) = \frac{6}{s^2}\boldsymbol{v}(\boldsymbol{x}) - \frac{1}{s^2}\sum_{\alpha\in\{x,y,z\}}\left[\boldsymbol{v}(\boldsymbol{x}+s\boldsymbol{e}_\alpha)+\boldsymbol{v}(\boldsymbol{x}-s\boldsymbol{e}_\alpha)\right].
 \end{equation}
 
-For non-periodic domains we currently apply the simplest boundary rule: zero-padding semantics. Any stencil sample that falls outside the valid fluid lattice is assigned value zero. This rule is applied uniformly to both Gaussian and Laplacian kernels, matching the implementation requirement to keep boundary treatment simple and explicit in this first integration step.
+For non-periodic domains, stencil samples that fall outside the valid fluid domain are assigned value zero (zero-padding). This boundary rule is applied uniformly to the Gaussian and Laplacian kernel convolutions.
 
-To avoid the inter-rank bias that occurs when stencil points cross MPI subdomain boundaries, we exchange only the downsampled velocity field across ranks before evaluating the kernels. Stencil samples that lie on another rank are therefore resolved from the owning rank's downsampled data, while only true out-of-domain samples are zero-padded.
+Stencil samples that cross MPI subdomain boundaries but remain within the fluid domain are \emph{not} zero-padded. Before kernel evaluation, we exchange the downsampled velocity field across all ranks via \texttt{MPI\_Allgatherv}. Cross-rank samples are then resolved on-demand from this halo cache, so only true out-of-domain samples receive the zero value. The same principle applies to the Laplacian stencil used for the enstrophy functional derivatives in Section~\ref{sec:tau-orthogonal-3d}: neighboring coarse-grid sites on remote ranks are handled by recomputing the double-filtered velocity $K*(K*\bar{\boldsymbol{u}})$ on-demand using the halo cache, rather than zero-padding them.
 
 \subsubsection{Quantity of interest evaluation}
 \label{sec:qoi-3d}
@@ -73,16 +73,17 @@ For each kernel $K$, we compute filtered velocity $\boldsymbol{v}_K = K*\bar{\bo
 \end{equation}
 and
 \begin{equation}
-    Z_K = \frac{1}{2}\sum_{\boldsymbol{x}\in\Omega_c}\|\nabla\times\boldsymbol{v}_K(\boldsymbol{x})\|^2.
+    Z_K = \frac{1}{2}\sum_{\boldsymbol{x}\in\Omega_c}\|\nabla\times\boldsymbol{v}_K(\boldsymbol{x})\|^2,
 \end{equation}
-where $\Omega_c$ denotes the set of coarse-grid sample points (sites with coordinates that are integer multiples of $m$ in each direction).
+where $\Omega_c$ denotes the set of coarse-grid sample points (sites with coordinates that are integer multiples of $m$ in each direction). The enstrophy is computed as $Z_K = \tfrac{1}{2}|\nabla\times(K*\bar{\boldsymbol{u}})|^2$, i.e.\ the curl is applied to the already-filtered velocity. For a translation-invariant kernel $K$, differentiation and convolution commute so that $\nabla\times(K*\bar{\boldsymbol{u}}) = K*(\nabla\times\bar{\boldsymbol{u}})$ at all interior sites; the two orderings differ only at zero-padded boundaries.
+
 The curl is discretized by centered differences on the coarse lattice, so the finite-difference denominator uses the effective spacing $\Delta x_{\mathrm{eff}}$,
 \begin{align}
     \partial_x f(\boldsymbol{x}) &\approx \frac{f(\boldsymbol{x}+\boldsymbol{e}_x)-f(\boldsymbol{x}-\boldsymbol{e}_x)}{2\,\Delta x_{\mathrm{eff}}},\\
     \partial_y f(\boldsymbol{x}) &\approx \frac{f(\boldsymbol{x}+\boldsymbol{e}_y)-f(\boldsymbol{x}-\boldsymbol{e}_y)}{2\,\Delta x_{\mathrm{eff}}},\\
     \partial_z f(\boldsymbol{x}) &\approx \frac{f(\boldsymbol{x}+\boldsymbol{e}_z)-f(\boldsymbol{x}-\boldsymbol{e}_z)}{2\,\Delta x_{\mathrm{eff}}},
 \end{align}
-again using zero-padding when neighbor samples are unavailable. Derivatives are computed on the kernel-filtered coarse-grained velocity field, not on the raw velocity. The filtered velocity is converted to physical units before output, and the integrated QoIs are reported in physical units by applying the coarse voxel size $\Delta x_{\mathrm{eff}}$ and the velocity scaling factors implied by the unit converter. For enstrophy, the gradient introduces an additional inverse-length factor, so the physical scaling includes the expected $m^2$ correction from the coarse spacing.
+using zero-padding only when neighbor samples fall outside the fluid domain. Sites on neighbouring MPI ranks that are within the domain are not zero-padded; their filtered velocities are resolved from the owning rank's data via the halo velocity exchange. The filtered velocity is converted to physical units before output, and the integrated QoIs are reported in physical units by applying the coarse voxel size $\Delta x_{\mathrm{eff}}$ and the velocity scaling factors implied by the unit converter. For enstrophy, the gradient introduces an additional inverse-length factor, so the physical scaling includes the expected $m^2$ correction from the coarse spacing.
 
 The implementation computes local partial sums per MPI rank and then applies global reductions to obtain domain-integrated QoIs. The resulting trajectories are written as a compact CSV time series with columns
 \begin{equation}
@@ -91,6 +92,7 @@ The implementation computes local partial sums per MPI rank and then applies glo
 where $t$ is expressed as the solver timestep.
 
 \subsection{Tau-orthogonal QoI tracking in three dimensions}
+\label{sec:tau-orthogonal-3d}
 
 The QoI diagnostics described above serve as the target quantities for the tau-orthogonal (TO) predictor-corrector tracking procedure. At each selected time step the coarse solver is nudged toward a prescribed reference trajectory by computing scalar correction coefficients $\tau_i$ and applying a corresponding velocity increment via the exact-difference method. This section details the three-dimensional implementation of each component.
 
@@ -163,14 +165,21 @@ evaluated at every coarse-grid site $\boldsymbol{x} \in \Omega_c$ using the loca
 \subsubsection{Exact-difference-method forcing and one-step lag}
 \label{sec:edm-forcing-3d}
 
-The velocity correction \eqref{eq:deltaV-assembly} is applied to the LBM populations through the exact-difference method (EDM) of Kupershtokh~\cite{kupershtokh_equations_2009}. Rather than modifying the body force term in the collision step, the EDM applies an increment directly to the pre-streaming distribution functions:
-\begin{equation} \label{eq:edm-apply}
-    f_q^{\mathrm{old}}(\boldsymbol{x}) \;\leftarrow\; f_q^{\mathrm{old}}(\boldsymbol{x}) + f_q^{\mathrm{eq}}\!\left(\rho,\, \rho\boldsymbol{v} + \rho\,\Delta\boldsymbol{v}_{SGS}\right) - f_q^{\mathrm{eq}}\!\left(\rho,\, \rho\boldsymbol{v}\right).
-\end{equation}
-Here $\rho$ and $\boldsymbol{v}$ are the macroscopic density and velocity at site $\boldsymbol{x}$, recovered from $f_q^{\mathrm{old}}$ before the modification. This formulation is equivalent to the EDM forcing in \eqref{eq:collide-and-stream} but is applied to the post-streaming, pre-collision distributions rather than inside the collision step.
+Let $f_q^n$ denote the distribution functions entering step $n$'s collision, $\boldsymbol{v}^n$ the corresponding macroscopic velocity, and $f_q^{n,a}$ the post-collision (predictor) distributions produced by the collision operator. The post-streaming output of step $n$ is written $f_q^{n+1,*}$.
 
-\paragraph{One-step lag.}
-Computing $\Delta\boldsymbol{v}_{SGS}$ requires the post-collision velocity field, which is available only after the collision step of the current time step. The correction is therefore applied to $f^{\mathrm{old}}$ immediately after the stream-and-swap at the end of step $n$, before step $n{+}1$ begins its collision phase. This introduces a one-step lag: the correction computed from the post-collision state at step $n$ is enforced at step $n{+}1$. This lag is acceptable at small time steps and avoids an additional collision evaluation.
+The velocity correction \eqref{eq:deltaV-assembly} is applied to the LBM populations through the exact-difference method (EDM) of Kupershtokh~\cite{kupershtokh_equations_2009}. For a given macroscopic velocity $\boldsymbol{v}$ and density $\rho$, the EDM increment is
+\begin{equation} \label{eq:edm-apply}
+    \Delta f_q(\boldsymbol{x}) = f_q^{\mathrm{eq}}\!\left(\rho,\, \boldsymbol{v} + \Delta\boldsymbol{v}_{SGS}\right) - f_q^{\mathrm{eq}}\!\left(\rho,\, \boldsymbol{v}\right).
+\end{equation}
+
+\paragraph{One-step lag in the fused streamer.}
+The ideal sequence is: (i)~collision produces $f^{n,a}$ and the post-collision velocity $\boldsymbol{v}^{n,a}$; (ii)~the EDM increment $\Delta f_q$ is added before streaming; (iii)~streaming propagates the corrected populations to give $f^{n+1}$. However, HemePure's \texttt{SimpleCollideAndStream} fuses collision and streaming into a single per-site pass with no architectural hook between them. Computing $\Delta\boldsymbol{v}_{SGS}(t^n)$ requires $\boldsymbol{v}^{n,a}$, which is only available after the full collision+streaming sweep has completed.
+
+The correction is therefore applied to $f^{n+1,*}$ (the post-streaming populations, stored as \texttt{fOld} after \texttt{SwapOldAndNew}) at the end of step $n$, before step $n{+}1$ begins:
+\begin{equation}
+    f_q^{n+1} = f_q^{n+1,*} + f_q^{\mathrm{eq}}\!\left(\rho^{n,a},\, \boldsymbol{v}^{n,a} + \Delta\boldsymbol{v}_{SGS}(t^n)\right) - f_q^{\mathrm{eq}}\!\left(\rho^{n,a},\, \boldsymbol{v}^{n,a}\right).
+\end{equation}
+This one-step lag is architecturally unavoidable in the fused streamer. The macroscopic momentum increment $\rho\,\Delta\boldsymbol{v}_{SGS}$ is applied exactly, and the QoI correction takes full effect when step $n{+}1$'s collision operates on the updated $f^{n+1}$.
 
 \subsubsection{Physical unit scaling}
 \label{sec:physical-scaling-3d}
@@ -226,7 +235,7 @@ Algorithm~\ref{alg:tracking-step} summarizes the complete tracking procedure for
     \EndFor
     \State Assemble $\Delta\boldsymbol{v}_{SGS}(\boldsymbol{x}) = \sum_i \tau_i \sum_j c_{ij} \mathbf{V}_j(\boldsymbol{x})$ for each $\boldsymbol{x} \in \Omega_c$
     \State Apply EDM correction \eqref{eq:edm-apply} to $f^{\mathrm{old}}$ on all local sites
-    \State Write $(\tau_1, \ldots, \tau_{N_Q})$ to CSV output (IO rank only)
+    \State Write $(dQ_1, \ldots, dQ_{N_Q})$ in physical units to CSV output (IO rank only)
 \end{algorithmic}
 \end{algorithm}
 
