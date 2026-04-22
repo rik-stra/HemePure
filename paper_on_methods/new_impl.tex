@@ -66,6 +66,7 @@ For non-periodic domains we currently apply the simplest boundary rule: zero-pad
 To avoid the inter-rank bias that occurs when stencil points cross MPI subdomain boundaries, we exchange only the downsampled velocity field across ranks before evaluating the kernels. Stencil samples that lie on another rank are therefore resolved from the owning rank's downsampled data, while only true out-of-domain samples are zero-padded.
 
 \subsubsection{Quantity of interest evaluation}
+\label{sec:qoi-3d}
 For each kernel $K$, we compute filtered velocity $\boldsymbol{v}_K = K*\bar{\boldsymbol{u}}$ and evaluate
 \begin{equation}
     E_K = \frac{1}{2}\sum_{\boldsymbol{x}\in\Omega_c}\|\boldsymbol{v}_K(\boldsymbol{x})\|^2,
@@ -88,5 +89,145 @@ The implementation computes local partial sums per MPI rank and then applies glo
     [t, E_{G_3}, E_{L_3}, E_{L_1}, Z_{G_3}, Z_{L_3}, Z_{L_1}],
 \end{equation}
 where $t$ is expressed as the solver timestep.
+
+\subsection{Tau-orthogonal QoI tracking in three dimensions}
+
+The QoI diagnostics described above serve as the target quantities for the tau-orthogonal (TO) predictor-corrector tracking procedure. At each selected time step the coarse solver is nudged toward a prescribed reference trajectory by computing scalar correction coefficients $\tau_i$ and applying a corresponding velocity increment via the exact-difference method. This section details the three-dimensional implementation of each component.
+
+\subsubsection{Functional derivatives in three dimensions}
+
+Following the notation of the main text, we define $\mathbf{V}_i(\boldsymbol{v}) = \delta q_i / \delta \boldsymbol{v}$ as the functional derivative of the $i$-th QoI density with respect to the velocity field. For a general convolution kernel $K$ with $K^* = K$ (both $G_s$ and $L_s$ are symmetric), the energy functional derivative is
+\begin{equation}
+    \mathbf{V}_{E,K}(\boldsymbol{v}) = K * K * \boldsymbol{v},
+\end{equation}
+i.e.\ the double-filtered velocity. In the implementation, the single-filtered field $K*\boldsymbol{v}$ is stored from the QoI computation and a second convolution pass is applied via the same stencil to obtain $K*(K*\boldsymbol{v})$.
+
+For enstrophy, the three-dimensional derivation differs from the two-dimensional case. Since the curl operator is self-adjoint in three dimensions and since $\text{curl}^* \circ \text{curl} = -\nabla^2$ for divergence-free fields (by the vector identity $\nabla\times(\nabla\times\boldsymbol{w}) = \nabla(\nabla\cdot\boldsymbol{w})-\nabla^2\boldsymbol{w}$ with $\nabla\cdot\boldsymbol{v}=0$), the variation of the filtered enstrophy gives
+\begin{align}
+    \delta Z_K &= \int_{\Omega_c} (K*\text{curl}\,\boldsymbol{v}) \cdot (K*\text{curl}\,\delta\boldsymbol{v}) \, \D\boldsymbol{x} \nonumber \\
+    &= \int_{\Omega_c} \text{curl}^*\!\left(K*K*\text{curl}\,\boldsymbol{v}\right) \cdot \delta\boldsymbol{v} \, \D\boldsymbol{x} \nonumber \\
+    &= -\int_{\Omega_c} \nabla^2(K*K*\boldsymbol{v}) \cdot \delta\boldsymbol{v} \, \D\boldsymbol{x},
+\end{align}
+so that
+\begin{equation}
+    \mathbf{V}_{Z,K}(\boldsymbol{v}) = -\nabla^2(K * K * \boldsymbol{v}).
+\end{equation}
+The discrete Laplacian is evaluated on the coarse grid with effective spacing $h = m\,\Delta x$ using a standard six-point stencil,
+\begin{equation} \label{eq:discrete-laplacian}
+    (\nabla^2_h \boldsymbol{w})(\boldsymbol{x})
+    = \frac{1}{h^2} \sum_{\alpha \in \{x,y,z\}} \bigl[\boldsymbol{w}(\boldsymbol{x}+h\boldsymbol{e}_\alpha) + \boldsymbol{w}(\boldsymbol{x}-h\boldsymbol{e}_\alpha) - 2\boldsymbol{w}(\boldsymbol{x})\bigr],
+\end{equation}
+where samples that fall outside the fluid domain are set to zero (same boundary rule as for the kernel convolutions). In the implementation, $h = m\,\Delta x$ and $1/h^2$ is precomputed as a single factor \texttt{invH2}.
+
+\subsubsection{Gram matrix and pattern orthogonalization}
+
+With $N_k$ kernels, the full set of QoIs has $N_Q = 2N_k$ members, ordered as
+\begin{equation}
+    [E_{K_1}, \ldots, E_{K_{N_k}},\; Z_{K_1}, \ldots, Z_{K_{N_k}}].
+\end{equation}
+For the default kernel set $\{G_3, L_3, L_1\}$ this gives $N_Q = 6$.
+
+The Gram matrix $\mathbf{G} \in \mathbb{R}^{N_Q \times N_Q}$ measures the inner products of the functional-derivative fields on the coarse grid,
+\begin{equation}
+    G_{ij} = \sum_{\boldsymbol{x} \in \Omega_c} \mathbf{V}_i(\boldsymbol{x}) \cdot \mathbf{V}_j(\boldsymbol{x}).
+\end{equation}
+Each rank accumulates local partial sums and a global $\mathbf{G}$ is obtained via \texttt{MPI\_Allreduce(MPI\_SUM)}.
+
+The spatial patterns $\boldsymbol{O}_i = \sum_{j=1}^{N_Q} c_{ij} \mathbf{V}_j$ are constructed by enforcing the orthogonality condition $\langle \mathbf{V}_l, \boldsymbol{O}_i \rangle = 0$ for all $l \neq i$, with diagonal elements $c_{ii} = 1$. Substituting gives an $(N_Q-1)\times(N_Q-1)$ linear system for the off-diagonal coefficients $c_{ij}$ ($j\neq i$):
+\begin{equation} \label{eq:gram-system}
+    \sum_{j \neq i} c_{ij}\, G_{lj} = -G_{li}, \quad \forall\, l \neq i.
+\end{equation}
+This system is solved independently for each $i$ via Gauss--Jordan elimination with partial pivoting. If the pivot drops below $10^{-30}$ the pattern degenerates and $\tau_i$ is set to zero.
+
+Once the coefficients are known, the effective influence of pattern $\boldsymbol{O}_i$ on its own QoI is
+\begin{equation}
+    \sigma_i = \langle \mathbf{V}_i, \boldsymbol{O}_i \rangle = \sum_{j=1}^{N_Q} c_{ij}\, G_{ij}.
+\end{equation}
+
+\subsubsection{Tracking: tau computation and velocity correction}
+
+At each tracking step $n$, the predicted QoIs $Q_i(\boldsymbol{v}^{p,n*})$ are compared with the reference values $Q_i^{\mathrm{ref}}(t^n)$ loaded from a pre-computed CSV trajectory (columns: timestep, $E_{G_3}$, $E_{L_3}$, $E_{L_1}$, $Z_{G_3}$, $Z_{L_3}$, $Z_{L_1}$, in physical units). To keep the linear solve dimensionally consistent, the reference values are converted to lattice units using the physical scaling factors $s_E$ and $s_Z$ (see Section~\ref{sec:physical-scaling-3d}), yielding the residual
+\begin{equation}
+    dQ_i^n = \frac{Q_i^{\mathrm{ref}}(t^n)}{s_i} - Q_i^{\mathrm{lattice}}(\boldsymbol{v}^{p,n*}),
+\end{equation}
+where $s_i = s_E$ for energy QoIs and $s_i = s_Z$ for enstrophy QoIs. The correction coefficient is then
+\begin{equation}
+    \tau_i(t^n) = \frac{dQ_i^n}{\sigma_i}, \quad |\sigma_i| > 10^{-30}.
+\end{equation}
+The per-site SGS velocity correction follows from \eqref{eq:TO-ansatz},
+\begin{equation} \label{eq:deltaV-assembly}
+    \Delta\boldsymbol{v}_{SGS}(\boldsymbol{x}) = \sum_{i=1}^{N_Q} \tau_i \sum_{j=1}^{N_Q} c_{ij}\, \mathbf{V}_j(\boldsymbol{x}),
+\end{equation}
+evaluated at every coarse-grid site $\boldsymbol{x} \in \Omega_c$ using the local functional-derivative fields. Sites that are not on the coarse grid receive $\Delta\boldsymbol{v}_{SGS}=\boldsymbol{0}$.
+
+\subsubsection{Exact-difference-method forcing and one-step lag}
+\label{sec:edm-forcing-3d}
+
+The velocity correction \eqref{eq:deltaV-assembly} is applied to the LBM populations through the exact-difference method (EDM) of Kupershtokh~\cite{kupershtokh_equations_2009}. Rather than modifying the body force term in the collision step, the EDM applies an increment directly to the pre-streaming distribution functions:
+\begin{equation} \label{eq:edm-apply}
+    f_q^{\mathrm{old}}(\boldsymbol{x}) \;\leftarrow\; f_q^{\mathrm{old}}(\boldsymbol{x}) + f_q^{\mathrm{eq}}\!\left(\rho,\, \rho\boldsymbol{v} + \rho\,\Delta\boldsymbol{v}_{SGS}\right) - f_q^{\mathrm{eq}}\!\left(\rho,\, \rho\boldsymbol{v}\right).
+\end{equation}
+Here $\rho$ and $\boldsymbol{v}$ are the macroscopic density and velocity at site $\boldsymbol{x}$, recovered from $f_q^{\mathrm{old}}$ before the modification. This formulation is equivalent to the EDM forcing in \eqref{eq:collide-and-stream} but is applied to the post-streaming, pre-collision distributions rather than inside the collision step.
+
+\paragraph{One-step lag.}
+Computing $\Delta\boldsymbol{v}_{SGS}$ requires the post-collision velocity field, which is available only after the collision step of the current time step. The correction is therefore applied to $f^{\mathrm{old}}$ immediately after the stream-and-swap at the end of step $n$, before step $n{+}1$ begins its collision phase. This introduces a one-step lag: the correction computed from the post-collision state at step $n$ is enforced at step $n{+}1$. This lag is acceptable at small time steps and avoids an additional collision evaluation.
+
+\subsubsection{Physical unit scaling}
+\label{sec:physical-scaling-3d}
+
+The QoI computation and the linear system \eqref{eq:gram-system} are performed entirely in lattice units. The reference trajectory, produced by a fine-grid simulation, is stored in physical SI units. The conversion factors are derived from the unit converter of the HemePure solver.
+
+Let $C_u$ denote the physical velocity scale (lattice velocity 1 corresponds to $C_u$ m/s) and let $\Delta x_{\mathrm{eff}} = m\,\Delta x$ be the coarse-grid spacing in metres, where $\Delta x$ is the fine-grid voxel size. For the kinetic energy, the volume element $(m\,\Delta x)^3$ contributes a factor of $C_u^2$ from the velocity squared:
+\begin{equation}
+    s_E = C_u^2\, (m\,\Delta x)^3.
+\end{equation}
+For enstrophy the curl introduces one inverse-length factor per spatial derivative. In physical units the curl is $C_u / (m\,\Delta x)$ times the lattice curl, so the integrated enstrophy scales as
+\begin{equation}
+    s_Z = \frac{C_u^2}{(m\,\Delta x)^2}\,(m\,\Delta x)^3 = C_u^2\,m\,\Delta x.
+\end{equation}
+
+\subsubsection{MPI communication}
+
+The tracking algorithm requires three collective communication steps per tracking call:
+
+\begin{enumerate}
+    \item \textbf{Halo velocity exchange} (\texttt{MPI\_Allgatherv}): each rank contributes the post-collision velocities at its local coarse-grid sites. After the gather, every rank holds the full set of coarse-grid velocities (indexed by a global non-contiguous site identifier), enabling cross-rank kernel stencil lookups without further communication.
+
+    \item \textbf{Global QoI and Gram reduction} (\texttt{MPI\_Allreduce(MPI\_SUM)}): local partial sums of the $N_Q$ energy/enstrophy integrals and the $N_Q^2$ Gram matrix entries are summed across all ranks. Both reductions are performed in a single packed call.
+
+    \item \textbf{Reference trajectory broadcast} (\texttt{MPI\_Bcast}): the reference CSV is read by the IO rank at simulation startup, and the timestep and QoI arrays are broadcast to all ranks so that every process can look up $Q_i^{\mathrm{ref}}(t^n)$ locally during the tracking loop.
+\end{enumerate}
+
+The halo exchange layout (counts and displacements for \texttt{MPI\_Allgatherv}) is precomputed once during initialization and reused at every tracking step.
+
+\subsubsection{Summary: full tracking step}
+
+Algorithm~\ref{alg:tracking-step} summarizes the complete tracking procedure for a single time step.
+
+\begin{algorithm}
+\caption{Single tracking step at time $t^n$}
+\label{alg:tracking-step}
+\begin{algorithmic}[1]
+    \State Read post-collision velocities $\boldsymbol{v}^{p,n*}$ from property cache
+    \State \textbf{AllGatherv} coarse-site velocities to build global halo cache $\mathcal{H}$
+    \State Compute local energy $E_{K_k}$ and enstrophy $Z_{K_k}$ partial sums for each kernel $k$ \hfill (Sec.~\ref{sec:qoi-3d})
+    \State \textbf{AllReduce(SUM)} $\Rightarrow$ global $\boldsymbol{Q}^{\mathrm{lattice}}$
+    \State Look up $\boldsymbol{Q}^{\mathrm{ref}}(t^n)$ from broadcast reference trajectory
+    \State Compute $dQ_i = Q_i^{\mathrm{ref}} / s_i - Q_i^{\mathrm{lattice}}$ for all $i$
+    \State Compute single-filtered fields $\{K_k * \boldsymbol{v}\}$ (reusing halo cache from step 2)
+    \State Compute energy FDs: $\mathbf{V}_{E,K_k} = K_k * (K_k * \boldsymbol{v})$ via second convolution pass
+    \State Compute enstrophy FDs: $\mathbf{V}_{Z,K_k} = -\nabla^2_h \mathbf{V}_{E,K_k}$ via \eqref{eq:discrete-laplacian}
+    \State Accumulate local Gram sums $G_{ij}^{\mathrm{local}}$
+    \State \textbf{AllReduce(SUM)} $\Rightarrow$ global Gram matrix $\mathbf{G}$
+    \For{$i = 1, \ldots, N_Q$}
+        \State Solve $(N_Q-1)\times(N_Q-1)$ system \eqref{eq:gram-system} for $\{c_{ij}\}_{j \neq i}$; set $c_{ii}=1$
+        \State Compute $\sigma_i = \sum_j c_{ij} G_{ij}$
+        \State Set $\tau_i = dQ_i / \sigma_i$ (zero if $|\sigma_i| < 10^{-30}$)
+    \EndFor
+    \State Assemble $\Delta\boldsymbol{v}_{SGS}(\boldsymbol{x}) = \sum_i \tau_i \sum_j c_{ij} \mathbf{V}_j(\boldsymbol{x})$ for each $\boldsymbol{x} \in \Omega_c$
+    \State Apply EDM correction \eqref{eq:edm-apply} to $f^{\mathrm{old}}$ on all local sites
+    \State Write $(\tau_1, \ldots, \tau_{N_Q})$ to CSV output (IO rank only)
+\end{algorithmic}
+\end{algorithm}
 
 \end{document}
