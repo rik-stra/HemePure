@@ -286,6 +286,149 @@ These scripts are case-specific examples, but they show the expected structure o
 | InOutLetCosine | Pressure cosine | No |
 | InOutLetFile | Pressure from file | No |
 
+## Running simulations
+
+### Basic command
+
+HemePure is launched via MPI from the directory containing the case files:
+
+```bash
+cd /path/to/case
+mpirun -n NRANKS /path/to/hemepure -in path/to/input.xml -out path/to/results/
+```
+
+- `-in` — path to the XML configuration file (relative to the working directory or absolute).
+- `-out` — output directory; created by the solver. The solver will abort if the directory already exists.
+- All output files (`whole.dat`, `kernel_qoi.csv`, `qoi_tracking_dq.csv`, etc.) are written under `<outdir>/Extracted/`.
+- Property output paths specified in the XML (`<propertyoutput file="...">`) are also prefixed with `<outdir>/Extracted/`.
+
+The geometry file path inside the XML is resolved relative to the XML file location.
+
+### Multi-fidelity QoI-tracking workflow
+
+The tracking workflow consists of three simulations run in sequence.
+
+#### Step 1 — High-fidelity reference run
+
+The HF simulation runs on a fine spatial grid (`dx_HF`) and records scale-aware QoI values as a CSV reference trajectory.
+
+```bash
+mpirun -n 16 hemepure \
+  -in pre_process_geometry/input_HF.xml \
+  -out results_hf/
+```
+
+Key XML attributes for the HF run:
+
+```xml
+<simulation>
+  <voxel_size units="m" value="5e-05"/>    <!-- fine grid -->
+  <step_length units="s" value="1.25e-05"/>
+  <steps units="lattice" value="400"/>
+</simulation>
+
+<kernel_qoi_output enabled="true"
+                   coarsening_factor="2"     <!-- projects to LF-equivalent grid -->
+                   filename="kernel_qoi.csv"
+                   frequency="4"            <!-- 4 HF steps = 1 LF step in physical time -->
+                   start="0"
+                   stop="1000000000"/>
+```
+
+`coarsening_factor` spatially averages `m×m×m` blocks of the fine grid before applying kernel stencils. Setting it equal to `dx_LF / dx_HF` projects the HF QoIs onto the same coarse grid that the LF simulation uses natively.
+
+`frequency` should be set to `dt_LF / dt_HF` so that one CSV row is written per LF-equivalent physical time step. The HF simulation must therefore be run for `dt_LF / dt_HF` times as many steps as the LF run (same total physical time). The CSV row is labeled with the fine-grid timestep number; the LF tracker uses `timestep_stride` (see below) to align its own step counter to these HF keys.
+
+#### Step 2 — Low-fidelity baseline (no tracking)
+
+Run the LF simulation on the coarse grid without forcing to obtain the uncontrolled QoI trajectory for comparison.
+
+```bash
+mpirun -n 8 hemepure \
+  -in pre_process_geometry/input_LF_notrack.xml \
+  -out results_lf_notrack/
+```
+
+Key differences from the HF XML:
+
+```xml
+<simulation>
+  <voxel_size units="m" value="0.0001"/>   <!-- coarse grid -->
+  <step_length units="s" value="5e-05"/>
+  <steps units="lattice" value="100"/>
+</simulation>
+
+<kernel_qoi_output enabled="true"
+                   coarsening_factor="1"   <!-- native LF resolution -->
+                   filename="kernel_qoi.csv"
+                   frequency="1"
+                   start="0"
+                   stop="1000000000"/>
+```
+
+#### Step 3 — Low-fidelity tracking run (with EDM forcing)
+
+Repeat the LF run with `<qoi_tracking>` enabled, pointing at the HF reference CSV.
+
+```bash
+mpirun -n 8 hemepure \
+  -in pre_process_geometry/input_LF_track.xml \
+  -out results_lf_track/
+```
+
+Additional XML element required:
+
+```xml
+<qoi_tracking enabled="true"
+              frequency="1"
+              start="0"
+              stop="1000000000"
+              coarsening_factor="1"
+              timestep_stride="4"
+              reference_file="results_hf/Extracted/kernel_qoi.csv"
+              tau_filename="qoi_tracking_dq.csv"/>
+```
+
+- `reference_file` — path to the HF `kernel_qoi.csv`, resolved relative to the working directory.
+- `frequency` — how often (in LF steps) a correction is computed and applied. `frequency="1"` means every LF step is corrected.
+- `timestep_stride` — ratio `dt_LF / dt_HF`. At each firing LF step `t`, the reference row is read at HF key `t × timestep_stride`, aligning the two trajectories by physical time rather than by raw timestep number. Default is `1` (same timestep on both grids).
+- `tau_filename` — output CSV recording the physical-unit QoI corrections `dQ_i` at each firing step, written to `<outdir>/Extracted/<tau_filename>`.
+- `coarsening_factor` — must match the coarsening factor used in `<kernel_qoi_output>` for this run.
+
+#### Timestep numbering and physical-time alignment
+
+The reference lookup uses `HF_key = LF_step × timestep_stride`. To populate matching HF keys the HF run must save every `HF frequency = timestep_stride / (LF frequency)` steps (for the common `LF frequency = 1`, that is `HF frequency = timestep_stride`). Example: `dt_HF = 1.25e-05`, `dt_LF = 5e-05`, `timestep_stride = 4`, `LF frequency = 1`, `HF frequency = 4` — LF step `n` (physical time `n × dt_LF`) matches HF step `4n` (physical time `4n × dt_HF = n × dt_LF`). The HF simulation must run `timestep_stride` times as many steps as the LF simulation to cover the same physical time window.
+
+If an LF firing step has no matching HF row (`refTrajectory.find` returns none) the correction for that step is silently skipped.
+
+#### Performance note
+
+The Gaussian kernel G3 (scale=3, radius=12) has 25³ = 15,625 taps. Computing the double-filtered velocity field `K*(K*v)` for all coarse sites during the tracking correction step scales as `O(N_coarse × radius³)`. With `coarsening_factor=1` on the LF grid (≈850k coarse sites), each correction step is expensive. Use a larger `coarsening_factor` or restrict to Laplacian kernels (which use the separable O(3s + 13) decomposition) if runtime is a concern.
+
+### Multi-fidelity case: `cases/multi_fidelities/`
+
+The prepared input files for the UnevenArms geometry live in `cases/multi_fidelities/pre_process_geometry/`. Run from `cases/multi_fidelities/`:
+
+| File | Purpose |
+|---|---|
+| `input_0.00005_run400.xml` | HF reference, 400 steps, coarsening_factor=2, frequency=4 |
+| `input_0.00005_test20.xml` | HF short test, 20 steps |
+| `input_0.0001_run100_notracking.xml` | LF baseline, 100 steps, no forcing |
+| `input_0.0001_test_notrack.xml` | LF baseline short test, 20 steps |
+| `input_0.0001_run100_tracking.xml` | LF tracking, 100 steps, frequency=4 |
+| `input_0.0001_test_track.xml` | LF tracking short test, 20 steps, frequency=4 |
+
+Reference run (used as the tracking target for the 100-step LF run):
+
+```bash
+cd cases/multi_fidelities
+mpirun -n 16 hemepure \
+  -in pre_process_geometry/input_0.00005_run400.xml \
+  -out results_hf_ref/
+# Reference CSV: results_hf_ref/Extracted/kernel_qoi.csv
+# Update reference_file in input_0.0001_run100_tracking.xml to point here.
+```
+
 ## Minimal practical workflow
 
 ```bash

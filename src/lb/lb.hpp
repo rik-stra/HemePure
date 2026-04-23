@@ -346,6 +346,38 @@ namespace hemelb
 			}
 
 		template<class LatticeType>
+			void LBM<LatticeType>::ApplyEDMCorrections(
+					const std::vector<util::Vector3D<distribn_t> >& perSiteDeltaV)
+			{
+				const site_t siteCount = mLatDat->GetLocalFluidSiteCount();
+				for (site_t i = 0; i < siteCount; ++i)
+				{
+					const util::Vector3D<distribn_t>& dv = perSiteDeltaV[i];
+					if (dv.x == 0.0 && dv.y == 0.0 && dv.z == 0.0)
+					{
+						continue;
+					}
+					distribn_t* f = mLatDat->GetFOld(i * LatticeType::NUMVECTORS);
+
+					distribn_t density, mx, my, mz, vx, vy, vz;
+					distribn_t feqBase[LatticeType::NUMVECTORS];
+					LatticeType::CalculateDensityMomentumFEq(f, density, mx, my, mz, vx, vy, vz, feqBase);
+
+					distribn_t feqCorr[LatticeType::NUMVECTORS];
+					LatticeType::CalculateFeq(density,
+					                          mx + density * dv.x,
+					                          my + density * dv.y,
+					                          mz + density * dv.z,
+					                          feqCorr);
+
+					for (Direction dir = 0; dir < LatticeType::NUMVECTORS; ++dir)
+					{
+						f[dir] += feqCorr[dir] - feqBase[dir];
+					}
+				}
+			}
+
+		template<class LatticeType>
 			LBM<LatticeType>::~LBM()
 			{
 				// Delete the collision and stream objects we've been using

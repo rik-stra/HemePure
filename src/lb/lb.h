@@ -91,6 +91,11 @@ namespace hemelb
 				hemelb::lb::LbmParameters *GetLbmParams();
 				lb::MacroscopicPropertyCache& GetPropertyCache();
 
+				// Apply exact-difference-method SGS corrections to fOld distributions.
+				// perSiteDeltaV[localSiteIndex] is the velocity increment DeltaV_SGS for that site.
+				// Sites with a zero vector are skipped.
+				void ApplyEDMCorrections(const std::vector<util::Vector3D<distribn_t> >& perSiteDeltaV);
+
 			private:
 				void SetInitialConditions();
 

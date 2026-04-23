@@ -45,6 +45,7 @@ SimulationMaster::SimulationMaster(hemelb::configuration::CommandLine & options,
 	propertyDataSource = NULL;
 	propertyExtractor = NULL;
 	kernelQoiActor = NULL;
+	qoiTrackingActor = NULL;
 	simulationState = NULL;
 	stepManager = NULL;
 	netConcern = NULL;
@@ -90,6 +91,7 @@ SimulationMaster::~SimulationMaster() {
 	delete propertyExtractor;
 	delete propertyDataSource;
 	delete kernelQoiActor;
+	delete qoiTrackingActor;
 	delete stabilityTester;
 	delete entropyTester;
 	delete simulationState;
@@ -264,6 +266,27 @@ void SimulationMaster::Initialise() {
 				fileManager->GetDataExtractionPath() + kernelQoiConfig.filename);
 	}
 
+	const hemelb::configuration::SimConfig::QoiTrackingConfig& qoiTrackingConfig =
+		simConfig->GetQoiTrackingConfig();
+	if (qoiTrackingConfig.enabled)
+	{
+		hemelb::lb::LBM<latticeType>* lbm = latticeBoltzmannModel;
+		hemelb::lb::qoi::QoiTrackingActor::EDMCallback edmCallback =
+			[lbm](const std::vector<hemelb::util::Vector3D<hemelb::distribn_t> >& dv) {
+				lbm->ApplyEDMCorrections(dv);
+			};
+		qoiTrackingActor = new hemelb::lb::qoi::QoiTrackingActor(
+				*simulationState,
+				*latticeData,
+				latticeBoltzmannModel->GetPropertyCache(),
+				ioComms,
+				*unitConverter,
+				timings,
+				qoiTrackingConfig,
+				fileManager->GetDataExtractionPath() + qoiTrackingConfig.tauFilename,
+				edmCallback);
+	}
+
 	imagesPeriod = OutputPeriod(imagesPerSimulation);
 
 	stepManager = new hemelb::net::phased::StepManager(2,
@@ -296,6 +319,10 @@ void SimulationMaster::Initialise() {
 
 	if (kernelQoiActor != NULL) {
 		stepManager->RegisterIteratedActorSteps(*kernelQoiActor, 1);
+	}
+
+	if (qoiTrackingActor != NULL) {
+		stepManager->RegisterIteratedActorSteps(*qoiTrackingActor, 1);
 	}
 
 	stepManager->RegisterCommsForAllPhases(*netConcern);
@@ -420,6 +447,10 @@ void SimulationMaster::RecalculatePropertyRequirements() {
 
 	if (kernelQoiActor != NULL) {
 		kernelQoiActor->SetRequiredProperties();
+	}
+
+	if (qoiTrackingActor != NULL) {
+		qoiTrackingActor->SetRequiredProperties();
 	}
 }
 

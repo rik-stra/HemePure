@@ -123,6 +123,11 @@ namespace hemelb
 			if (kernelQoiEl != io::xml::Element::Missing())
 				DoIOForKernelQoiOutput(kernelQoiEl);
 
+			// Optional element <qoi_tracking>
+			io::xml::Element qoiTrackingEl = topNode.GetChildOrNull("qoi_tracking");
+			if (qoiTrackingEl != io::xml::Element::Missing())
+				DoIOForQoiTracking(qoiTrackingEl);
+
 		}
 
 		void SimConfig::DoIOForSimulation(const io::xml::Element simEl)
@@ -1218,6 +1223,74 @@ namespace hemelb
 			{
 				throw Exception() << "kernel_qoi_output coarsening_factor must be >= 1";
 			}
+		}
+
+		void SimConfig::DoIOForQoiTracking(const io::xml::Element& trackingEl)
+		{
+			qoiTrackingConfig.enabled = true;
+
+			const std::string* enabledAttr = trackingEl.GetAttributeOrNull("enabled");
+			if (enabledAttr != NULL)
+				qoiTrackingConfig.enabled = (*enabledAttr == "true") || (*enabledAttr == "1");
+
+			const std::string* frequencyAttr = trackingEl.GetAttributeOrNull("frequency");
+			if (frequencyAttr != NULL)
+			{
+				std::istringstream iss(*frequencyAttr);
+				iss >> qoiTrackingConfig.frequency;
+			}
+
+			const std::string* startAttr = trackingEl.GetAttributeOrNull("start");
+			if (startAttr != NULL)
+			{
+				std::istringstream iss(*startAttr);
+				iss >> qoiTrackingConfig.start;
+			}
+
+			const std::string* stopAttr = trackingEl.GetAttributeOrNull("stop");
+			if (stopAttr != NULL)
+			{
+				std::istringstream iss(*stopAttr);
+				iss >> qoiTrackingConfig.stop;
+			}
+
+			const std::string* coarseningAttr = trackingEl.GetAttributeOrNull("coarsening_factor");
+			if (coarseningAttr != NULL)
+			{
+				std::istringstream iss(*coarseningAttr);
+				iss >> qoiTrackingConfig.coarseningFactor;
+			}
+
+			const std::string* strideAttr = trackingEl.GetAttributeOrNull("timestep_stride");
+			if (strideAttr != NULL)
+			{
+				std::istringstream iss(*strideAttr);
+				iss >> qoiTrackingConfig.timestepStride;
+			}
+
+			const std::string* flushIntervalAttr = trackingEl.GetAttributeOrNull("flush_interval");
+			if (flushIntervalAttr != NULL)
+			{
+				std::istringstream iss(*flushIntervalAttr);
+				iss >> qoiTrackingConfig.flushInterval;
+			}
+
+			const std::string* referenceFileAttr = trackingEl.GetAttributeOrNull("reference_file");
+			if (referenceFileAttr != NULL)
+				qoiTrackingConfig.referenceFile = *referenceFileAttr;
+
+			const std::string* tauFilenameAttr = trackingEl.GetAttributeOrNull("tau_filename");
+			if (tauFilenameAttr != NULL)
+				qoiTrackingConfig.tauFilename = *tauFilenameAttr;
+
+			if (qoiTrackingConfig.frequency == 0)
+				throw Exception() << "qoi_tracking frequency must be > 0";
+
+			if (qoiTrackingConfig.coarseningFactor < 1)
+				throw Exception() << "qoi_tracking coarsening_factor must be >= 1";
+
+			if (qoiTrackingConfig.timestepStride == 0)
+				throw Exception() << "qoi_tracking timestep_stride must be >= 1";
 		}
 
 		void SimConfig::DoIOForSteadyFlowConvergence(const io::xml::Element& convEl)

@@ -56,10 +56,17 @@ For the Gaussian kernel, we use a compact support of radius $4s$ lattice cells i
 \begin{equation}
     G_s(i,j,k) = \frac{\exp\left(-\frac{i^2+j^2+k^2}{2s^2}\right)}{\sum_{(p,q,r)\in[-4s,4s]^3}\exp\left(-\frac{p^2+q^2+r^2}{2s^2}\right)}.
 \end{equation}
-For the Laplacian kernel, we use a sparse 3D stencil with spacing $s$,
+For the Laplacian-based high-pass kernel we use the three-dimensional analogue of the Kronecker construction introduced in the main text. Let $B_{3D}$ be the $5 \times 5 \times 5$ star-shaped base stencil with nonzero entries
 \begin{equation}
-    (L_s * \boldsymbol{v})(\boldsymbol{x}) = \frac{6}{s^2}\boldsymbol{v}(\boldsymbol{x}) - \frac{1}{s^2}\sum_{\alpha\in\{x,y,z\}}\left[\boldsymbol{v}(\boldsymbol{x}+s\boldsymbol{e}_\alpha)+\boldsymbol{v}(\boldsymbol{x}-s\boldsymbol{e}_\alpha)\right].
+    B_{3D}(0,0,0) = 6, \qquad
+    B_{3D}(\pm\boldsymbol{e}_\alpha) = -2, \qquad
+    B_{3D}(\pm 2\boldsymbol{e}_\alpha) = +1,
 \end{equation}
+for $\alpha \in \{x,y,z\}$, and zero elsewhere. The pattern is zero-mean ($6 - 6\cdot 2 + 6\cdot 1 = 0$) with $\ell_1$-norm $24$. The scale-$s$ kernel is obtained by Kronecker-replicating every base cell into an $s\times s \times s$ block of ones, $J_s^3$, and dividing by $24 s^3$:
+\begin{equation}
+    L_s = \frac{1}{24\, s^3} \, \mathrm{kron}_{3D}\!\left(B_{3D}, J_s^3\right).
+\end{equation}
+For $s = 1$ this reduces to the $13$-tap base stencil; for $s = 3$ each base cell is replaced by a $3\times 3\times 3$ block centered at $(3i, 3j, 3k)$, giving $13 \cdot 27 = 351$ taps. The construction preserves the zero-mean (high-pass) property at every $s$, and keeps the $\ell_1$-norm of the kernel equal to one, so that $L_s$ is a unit-normalised band-pass filter whose characteristic length scale is proportional to $s$. Only odd $s$ are supported, so that the replicated block is centered on its base position.
 
 For non-periodic domains, stencil samples that fall outside the valid fluid domain are assigned value zero (zero-padding). This boundary rule is applied uniformly to the Gaussian and Laplacian kernel convolutions.
 

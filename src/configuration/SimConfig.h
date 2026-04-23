@@ -81,6 +81,28 @@ namespace hemelb
             bool doIncompressibilityCheck; ///< Whether to turn on the IncompressibilityChecker or not
         };
 
+          struct QoiTrackingConfig
+          {
+            QoiTrackingConfig() :
+              enabled(false), frequency(1), start(0), stop(1000000000),
+              coarseningFactor(1), timestepStride(1), flushInterval(100),
+              referenceFile(""), tauFilename("qoi_tracking_tau.csv")
+            {
+            }
+
+            bool enabled;
+            unsigned long frequency;
+            unsigned long start;
+            unsigned long stop;
+            int coarseningFactor;
+            /// Ratio dt_LF / dt_HF. Reference-CSV lookup is at HF step = LF step * timestepStride,
+            /// so the two trajectories align by physical time rather than raw timestep number.
+            unsigned long timestepStride;
+            unsigned long flushInterval;
+            std::string referenceFile;  ///< CSV produced by a reference (fine-grid) simulation
+            std::string tauFilename;    ///< Output CSV for the tau_i time series
+          };
+
           struct KernelQoiOutputConfig
           {
             KernelQoiOutputConfig() :
@@ -234,6 +256,11 @@ namespace hemelb
           return kernelQoiOutputConfig;
         }
 
+        const QoiTrackingConfig& GetQoiTrackingConfig() const
+        {
+          return qoiTrackingConfig;
+        }
+
       protected:
         /**
          * Create the unit converter - virtual so that mocks can override it.
@@ -334,6 +361,7 @@ namespace hemelb
          */
         void DoIOForMonitoring(const io::xml::Element& monEl);
         void DoIOForKernelQoiOutput(const io::xml::Element& qoiEl);
+        void DoIOForQoiTracking(const io::xml::Element& trackingEl);
 
         /**
          * Reads configuration of steady state flow convergence check from XML file
@@ -368,6 +396,7 @@ namespace hemelb
         PhysicalPressure initialPressure_mmHg; ///< Pressure used to initialise the domain
         MonitoringConfig monitoringConfig; ///< Configuration of various checks/tests
         KernelQoiOutputConfig kernelQoiOutputConfig;
+        QoiTrackingConfig qoiTrackingConfig;
 
       protected:
         // These have to contain pointers because there are multiple derived types that might be

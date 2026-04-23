@@ -33,6 +33,7 @@ add_library(hemelb_lb
 	MacroscopicPropertyCache.cc
 	qoi/KernelScaleAwareQoi.cc
 	qoi/KernelQoiActor.cc
+	qoi/QoiTrackingActor.cc
 	SimulationState.cc
 	StabilityTester.cc
 	InitialCondition.cc
